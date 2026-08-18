@@ -1,7 +1,7 @@
 from fastapi import FastAPI
 
 from app.database import create_db_and_tables
-from app.routers import conditions, drugs
+from app.routers import ask, conditions, drugs
 
 
 app = FastAPI(
@@ -26,3 +26,4 @@ def health_check():
 
 app.include_router(conditions.router)
 app.include_router(drugs.router)
+app.include_router(ask.router)

@@ -42,3 +42,17 @@ class DrugCreate(SQLModel):
 
 class DrugRead(DrugCreate):
     id: int
+
+
+class AskRequest(SQLModel):
+    question: str = Field(min_length=1, max_length=1000)
+
+    _strip_question = field_validator("question", mode="before")(
+        strip_required_text
+    )
+
+
+class AskResponse(SQLModel):
+    question: str
+    answer: str
+    source: str
