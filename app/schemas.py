@@ -56,3 +56,8 @@ class AskResponse(SQLModel):
     question: str
     answer: str
     source: str
+
+
+class KnowledgeRebuildResponse(SQLModel):
+    message: str
+    document_count: int

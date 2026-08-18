@@ -1,7 +1,14 @@
+import os
+
+from dotenv import load_dotenv
 from fastapi import FastAPI
 
+load_dotenv()
+if not os.getenv("OPENAI_BASE_URL", "").strip():
+    os.environ.pop("OPENAI_BASE_URL", None)
+
 from app.database import create_db_and_tables
-from app.routers import ask, conditions, drugs
+from app.routers import ask, conditions, drugs, knowledge
 
 
 app = FastAPI(
@@ -27,3 +34,4 @@ def health_check():
 app.include_router(conditions.router)
 app.include_router(drugs.router)
 app.include_router(ask.router)
+app.include_router(knowledge.router)

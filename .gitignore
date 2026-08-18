@@ -4,3 +4,4 @@ __pycache__/
 .env
 database.db
 medical_health.db
+chroma_db/

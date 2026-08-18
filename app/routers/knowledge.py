@@ -1,0 +1,18 @@
+from fastapi import APIRouter, Depends
+from sqlmodel import Session
+
+from app.database import get_session
+from app.schemas import KnowledgeRebuildResponse
+from app.vector_store import rebuild_vector_store
+
+
+router = APIRouter(prefix="/knowledge", tags=["knowledge"])
+
+
+@router.post("/rebuild", response_model=KnowledgeRebuildResponse)
+def rebuild_knowledge(session: Session = Depends(get_session)):
+    document_count = rebuild_vector_store(session)
+    return KnowledgeRebuildResponse(
+        message="知识库向量重建完成",
+        document_count=document_count,
+    )

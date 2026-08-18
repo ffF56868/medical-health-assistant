@@ -1,83 +1,48 @@
-from fastapi import APIRouter, Depends
-from sqlmodel import Session, select
+from fastapi import APIRouter, HTTPException
 
-from app.database import get_session
-from app.models import Condition, Drug
 from app.schemas import AskRequest, AskResponse
+from app.vector_store import get_vector_store
 
 
 router = APIRouter(prefix="/ask", tags=["ask"])
 
 
-def text_bigrams(text: str) -> set[str]:
-    """把中文文本切成连续的两个字，作为轻量级关键词。"""
-    normalized = "".join(character for character in text if character.isalnum())
-    return {
-        normalized[index : index + 2]
-        for index in range(len(normalized) - 1)
-    }
-
-
-def relevance_score(question: str, content: str, name: str) -> int:
-    """名称完全命中优先，其余情况按问题与内容的共同关键词计分。"""
-    if name in question:
-        return 100
-
-    return len(text_bigrams(question) & text_bigrams(content))
-
-
 @router.post("", response_model=AskResponse)
-def ask_question(
-    request: AskRequest,
-    session: Session = Depends(get_session),
-):
-    """根据问题中出现的名称，从当前 SQLite 知识库检索内容。"""
-    question = request.question
-    answer_parts: list[str] = []
+def ask_question(request: AskRequest):
+    """根据语义相似度，从 Chroma 向量库检索医疗健康资料。"""
+    try:
+        vector_store = get_vector_store()
+        matches = vector_store.similarity_search_with_relevance_scores(
+            request.question,
+            k=3,
+        )
+    except Exception as error:
+        raise HTTPException(
+            status_code=503,
+            detail="知识库暂时不可用，请确认已执行 /knowledge/rebuild",
+        ) from error
 
-    condition_matches: list[tuple[int, Condition]] = []
-    conditions = session.exec(select(Condition).order_by(Condition.id)).all()
-    for condition in conditions:
-        content = f"{condition.name}{condition.symptoms}{condition.treatment}"
-        score = relevance_score(question, content, condition.name)
-        if score > 0:
-            condition_matches.append((score, condition))
+    relevant_documents = [
+        document
+        for document, score in matches
+        if score >= 0.3
+    ]
 
-    for _, condition in sorted(condition_matches, reverse=True, key=lambda item: item[0])[:3]:
-        answer_parts.append(
-            f"病症：{condition.name}\n"
-            f"常见症状：{condition.symptoms}\n"
-            f"处理建议：{condition.treatment}"
+    if not relevant_documents:
+        return AskResponse(
+            question=request.question,
+            answer="知识库中没有找到足够相关的内容。建议换一种更具体的说法。",
+            source="chroma-vector-search:no-match",
         )
 
-    drug_matches: list[tuple[int, Drug]] = []
-    drugs = session.exec(select(Drug).order_by(Drug.id)).all()
-    for drug in drugs:
-        content = f"{drug.name}{drug.effects}{drug.instructions}"
-        score = relevance_score(question, content, drug.name)
-        if score > 0:
-            drug_matches.append((score, drug))
-
-    for _, drug in sorted(drug_matches, reverse=True, key=lambda item: item[0])[:3]:
-        answer_parts.append(
-            f"药物：{drug.name}\n"
-            f"作用：{drug.effects}\n"
-            f"使用说明：{drug.instructions}"
-        )
-
-    if answer_parts:
-        answer = "\n\n".join(answer_parts)
-        answer += "\n\n提醒：以上是知识库中的通用信息，不代替医生诊断或处方。"
-        source = "sqlite-knowledge-base"
-    else:
-        answer = (
-            "当前知识库没有找到与问题直接匹配的病症或药物。"
-            "你可以先在问题中写出具体名称，例如“普通感冒有哪些症状？”"
-        )
-        source = "sqlite-knowledge-base:no-match"
+    answer = "\n\n".join(
+        document.page_content
+        for document in relevant_documents
+    )
+    answer += "\n\n提醒：以上是知识库中的通用信息，不代替医生诊断或处方。"
 
     return AskResponse(
-        question=question,
+        question=request.question,
         answer=answer,
-        source=source,
+        source="chroma-vector-search",
     )
