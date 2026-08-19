@@ -35,6 +35,7 @@
           </div>
           <div class="header-actions">
             <div class="knowledge-status" id="knowledge-status" title="正在读取知识库状态">知识库状态读取中...</div>
+            <button class="secondary-button" id="knowledge-manager-toggle" type="button">管理资料</button>
             <button class="secondary-button" id="rebuild-knowledge" type="button">重建知识库</button>
             <button class="icon-button" id="new-chat" type="button" title="开始新对话" aria-label="开始新对话">+</button>
           </div>
@@ -45,6 +46,51 @@
             <p class="message-label">医疗健康助手</p>
             <p>你好，可以根据已有资料向我提问，例如“布洛芬有什么作用？”或“睡眠不足时有哪些通用健康建议？”</p>
           </div>
+        </section>
+
+        <section class="knowledge-manager is-hidden" id="knowledge-manager">
+          <div class="manager-heading">
+            <div>
+              <p class="eyebrow">资料管理</p>
+              <h2>维护医疗健康知识库</h2>
+            </div>
+            <p>新增资料后不会立刻被问答使用。顶部状态变为“待重建”后，点击“重建知识库”才会更新 RAG。</p>
+          </div>
+
+          <form class="knowledge-search" id="knowledge-search-form">
+            <label class="sr-only" for="knowledge-query">搜索知识库</label>
+            <input id="knowledge-query" maxlength="100" placeholder="搜索病症、药物或资料关键词" required />
+            <button type="submit">搜索</button>
+          </form>
+          <p class="manager-status" id="search-status"></p>
+          <div class="search-results" id="search-results"></div>
+
+          <div class="manager-grid">
+            <form class="entry-form" id="condition-form">
+              <div class="form-heading"><span class="type-chip condition">病症</span><h3>添加病症资料</h3></div>
+              <label>病症名称<input name="name" maxlength="100" required /></label>
+              <label>常见症状<textarea name="symptoms" rows="4" maxlength="5000" required></textarea></label>
+              <label>通用处理建议<textarea name="treatment" rows="4" maxlength="5000" required></textarea></label>
+              <button type="submit">保存病症</button>
+            </form>
+
+            <form class="entry-form" id="drug-form">
+              <div class="form-heading"><span class="type-chip drug">药物</span><h3>添加药物资料</h3></div>
+              <label>药物名称<input name="name" maxlength="100" required /></label>
+              <label>药物作用<textarea name="effects" rows="4" maxlength="5000" required></textarea></label>
+              <label>使用说明<textarea name="instructions" rows="4" maxlength="5000" required></textarea></label>
+              <button type="submit">保存药物</button>
+            </form>
+
+            <form class="entry-form" id="document-form">
+              <div class="form-heading"><span class="type-chip document">资料</span><h3>添加手写资料</h3></div>
+              <label>资料标题<input name="title" maxlength="200" required /></label>
+              <label>资料来源<input name="source" maxlength="200" value="manual" required /></label>
+              <label>资料内容<textarea name="content" rows="7" maxlength="20000" required></textarea></label>
+              <button type="submit">保存资料</button>
+            </form>
+          </div>
+          <p class="manager-status" id="entry-status" aria-live="polite"></p>
         </section>
 
         <form class="composer" id="ask-form">

@@ -6,6 +6,13 @@ const newChatButton = document.querySelector("#new-chat");
 const referenceTemplate = document.querySelector("#reference-template");
 const knowledgeStatus = document.querySelector("#knowledge-status");
 const rebuildKnowledgeButton = document.querySelector("#rebuild-knowledge");
+const managerToggleButton = document.querySelector("#knowledge-manager-toggle");
+const knowledgeManager = document.querySelector("#knowledge-manager");
+const searchForm = document.querySelector("#knowledge-search-form");
+const searchInput = document.querySelector("#knowledge-query");
+const searchStatus = document.querySelector("#search-status");
+const searchResults = document.querySelector("#search-results");
+const entryStatus = document.querySelector("#entry-status");
 
 let conversationId = createConversationId();
 
@@ -159,6 +166,96 @@ async function rebuildKnowledge() {
   }
 }
 
+function setManagerVisible(visible) {
+  knowledgeManager.classList.toggle("is-hidden", !visible);
+  messageList.classList.toggle("is-hidden", visible);
+  form.classList.toggle("is-hidden", visible);
+  managerToggleButton.textContent = visible ? "返回问答" : "管理资料";
+  if (visible) searchInput.focus();
+}
+
+function getErrorMessage(data, fallback) {
+  return data?.detail || fallback;
+}
+
+function clearSearchResults() {
+  searchResults.innerHTML = "";
+}
+
+function renderSearchResults(data) {
+  clearSearchResults();
+  if (data.results.length === 0) {
+    searchStatus.textContent = `没有找到与“${data.query}”相关的资料。`;
+    return;
+  }
+
+  searchStatus.textContent = `找到 ${data.total_count} 条资料。`;
+  for (const item of data.results) {
+    const result = document.createElement("article");
+    result.className = "search-result";
+    const header = document.createElement("div");
+    header.className = "search-result-header";
+    const title = document.createElement("h3");
+    title.textContent = item.title;
+    const type = document.createElement("span");
+    type.className = `type-chip ${item.type}`;
+    type.textContent = ({ condition: "病症", drug: "药物", document: "资料" })[item.type] || item.type;
+    header.append(title, type);
+    const fields = document.createElement("p");
+    fields.textContent = `匹配字段：${item.matched_fields.join("、")}${item.source ? ` | 来源：${item.source}` : ""}`;
+    const excerpt = document.createElement("p");
+    excerpt.textContent = item.excerpt;
+    result.append(header, fields, excerpt);
+    searchResults.append(result);
+  }
+}
+
+async function searchKnowledge(event) {
+  event.preventDefault();
+  const query = searchInput.value.trim();
+  if (!query) return;
+
+  searchStatus.className = "manager-status";
+  searchStatus.textContent = "正在搜索...";
+  clearSearchResults();
+  try {
+    const response = await fetch(`/knowledge/search?q=${encodeURIComponent(query)}`);
+    const data = await response.json();
+    if (!response.ok) throw new Error(getErrorMessage(data, "搜索失败。"));
+    renderSearchResults(data);
+  } catch (error) {
+    searchStatus.className = "manager-status error";
+    searchStatus.textContent = `搜索失败：${error.message}`;
+  }
+}
+
+async function createKnowledgeEntry(formElement, endpoint) {
+  const submitButton = formElement.querySelector("button[type='submit']");
+  const payload = Object.fromEntries(new FormData(formElement).entries());
+  entryStatus.className = "manager-status";
+  entryStatus.textContent = "正在保存资料...";
+  submitButton.disabled = true;
+
+  try {
+    const response = await fetch(endpoint, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    const data = await response.json();
+    if (!response.ok) throw new Error(getErrorMessage(data, "保存失败。"));
+    formElement.reset();
+    if (endpoint === "/documents") formElement.elements.source.value = "manual";
+    entryStatus.textContent = `已保存“${data.name || data.title}”。知识库已变为待重建状态。`;
+    await loadKnowledgeStatus();
+  } catch (error) {
+    entryStatus.className = "manager-status error";
+    entryStatus.textContent = `保存失败：${error.message}`;
+  } finally {
+    submitButton.disabled = false;
+  }
+}
+
 form.addEventListener("submit", async (event) => {
   event.preventDefault();
   const question = questionInput.value.trim();
@@ -194,6 +291,22 @@ form.addEventListener("submit", async (event) => {
 
 newChatButton.addEventListener("click", resetConversation);
 rebuildKnowledgeButton.addEventListener("click", rebuildKnowledge);
+managerToggleButton.addEventListener("click", () => {
+  setManagerVisible(knowledgeManager.classList.contains("is-hidden"));
+});
+searchForm.addEventListener("submit", searchKnowledge);
+document.querySelector("#condition-form").addEventListener("submit", (event) => {
+  event.preventDefault();
+  createKnowledgeEntry(event.currentTarget, "/conditions");
+});
+document.querySelector("#drug-form").addEventListener("submit", (event) => {
+  event.preventDefault();
+  createKnowledgeEntry(event.currentTarget, "/drugs");
+});
+document.querySelector("#document-form").addEventListener("submit", (event) => {
+  event.preventDefault();
+  createKnowledgeEntry(event.currentTarget, "/documents");
+});
 loadKnowledgeStatus();
 
 questionInput.addEventListener("keydown", (event) => {
