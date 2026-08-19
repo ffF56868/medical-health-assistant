@@ -22,6 +22,14 @@ const editFields = document.querySelector("#edit-fields");
 const editStatus = document.querySelector("#edit-status");
 const historyList = document.querySelector("#history-list");
 const refreshHistoryButton = document.querySelector("#refresh-history");
+const feedbackDashboardToggle = document.querySelector("#feedback-dashboard-toggle");
+const qualityDashboard = document.querySelector("#quality-dashboard");
+const refreshFeedbackButton = document.querySelector("#refresh-feedback");
+const dashboardStatus = document.querySelector("#dashboard-status");
+const feedbackMetrics = document.querySelector("#feedback-metrics");
+const commonReasons = document.querySelector("#common-reasons");
+const recommendedActions = document.querySelector("#recommended-actions");
+const recentFeedbackList = document.querySelector("#recent-feedback-list");
 
 const entryConfiguration = {
   condition: {
@@ -319,14 +327,120 @@ async function rebuildKnowledge() {
 
 function setManagerVisible(visible) {
   knowledgeManager.classList.toggle("is-hidden", !visible);
+  qualityDashboard.classList.add("is-hidden");
   messageList.classList.toggle("is-hidden", visible);
   form.classList.toggle("is-hidden", visible);
   managerToggleButton.textContent = visible ? "返回问答" : "管理资料";
+  feedbackDashboardToggle.textContent = "质量面板";
   if (visible) searchInput.focus();
+}
+
+function setFeedbackDashboardVisible(visible) {
+  qualityDashboard.classList.toggle("is-hidden", !visible);
+  knowledgeManager.classList.add("is-hidden");
+  messageList.classList.toggle("is-hidden", visible);
+  form.classList.toggle("is-hidden", visible);
+  feedbackDashboardToggle.textContent = visible ? "返回问答" : "质量面板";
+  managerToggleButton.textContent = "管理资料";
+  if (visible) loadFeedbackDashboard();
 }
 
 function getErrorMessage(data, fallback) {
   return data?.detail || fallback;
+}
+
+function appendInsight(container, text, count = null) {
+  const item = document.createElement("div");
+  item.className = "insight-item";
+  item.textContent = text;
+  if (count !== null) {
+    const countElement = document.createElement("span");
+    countElement.className = "insight-count";
+    countElement.textContent = `${count} 次`;
+    item.append(countElement);
+  }
+  container.append(item);
+}
+
+function renderFeedbackDashboard(summary, suggestions, recentItems) {
+  feedbackMetrics.innerHTML = "";
+  const helpfulRate = summary.helpful_rate === null
+    ? "暂无"
+    : `${Math.round(summary.helpful_rate * 100)}%`;
+  const metrics = [
+    ["评价总数", summary.total_count],
+    ["有帮助率", helpfulRate],
+    ["没帮助", summary.not_helpful_count],
+  ];
+  for (const [label, value] of metrics) {
+    const metric = document.createElement("section");
+    metric.className = "metric";
+    const metricLabel = document.createElement("p");
+    metricLabel.className = "metric-label";
+    metricLabel.textContent = label;
+    const metricValue = document.createElement("p");
+    metricValue.className = "metric-value";
+    metricValue.textContent = value;
+    metric.append(metricLabel, metricValue);
+    feedbackMetrics.append(metric);
+  }
+
+  commonReasons.innerHTML = "";
+  if (suggestions.common_reasons.length === 0) {
+    appendInsight(commonReasons, "暂无“没帮助”反馈原因。");
+  } else {
+    for (const reason of suggestions.common_reasons) {
+      appendInsight(commonReasons, reason.text, reason.count);
+    }
+  }
+
+  recommendedActions.innerHTML = "";
+  for (const action of suggestions.recommended_actions) {
+    appendInsight(recommendedActions, action);
+  }
+
+  recentFeedbackList.innerHTML = "";
+  if (recentItems.length === 0) {
+    appendInsight(recentFeedbackList, "暂无“没帮助”回答。可以先在问答后留下评价。 ");
+    return;
+  }
+  for (const feedback of recentItems) {
+    const item = document.createElement("article");
+    item.className = "recent-feedback-item";
+    const question = document.createElement("p");
+    question.className = "feedback-question";
+    question.textContent = `问题：${feedback.question || "未找到原问题"}`;
+    const answer = document.createElement("p");
+    answer.textContent = `回答：${feedback.answer}`;
+    const reason = document.createElement("p");
+    reason.className = "feedback-reason";
+    reason.textContent = `原因：${feedback.reason || "未填写"}`;
+    item.append(question, answer, reason);
+    recentFeedbackList.append(item);
+  }
+}
+
+async function loadFeedbackDashboard() {
+  dashboardStatus.textContent = "正在读取反馈数据...";
+  try {
+    const [summaryResponse, suggestionsResponse, recentResponse] = await Promise.all([
+      fetch("/feedback/summary"),
+      fetch("/feedback/improvement-suggestions"),
+      fetch("/feedback/recent?helpful=false&limit=10"),
+    ]);
+    const [summary, suggestions, recentItems] = await Promise.all([
+      summaryResponse.json(),
+      suggestionsResponse.json(),
+      recentResponse.json(),
+    ]);
+    if (!summaryResponse.ok) throw new Error(getErrorMessage(summary, "读取统计失败。"));
+    if (!suggestionsResponse.ok) throw new Error(getErrorMessage(suggestions, "读取建议失败。"));
+    if (!recentResponse.ok) throw new Error(getErrorMessage(recentItems, "读取反馈明细失败。"));
+    renderFeedbackDashboard(summary, suggestions, recentItems);
+    dashboardStatus.textContent = "数据已更新。";
+  } catch (error) {
+    dashboardStatus.textContent = `读取失败：${error.message}`;
+  }
 }
 
 function clearSearchResults() {
@@ -631,6 +745,10 @@ rebuildKnowledgeButton.addEventListener("click", rebuildKnowledge);
 managerToggleButton.addEventListener("click", () => {
   setManagerVisible(knowledgeManager.classList.contains("is-hidden"));
 });
+feedbackDashboardToggle.addEventListener("click", () => {
+  setFeedbackDashboardVisible(qualityDashboard.classList.contains("is-hidden"));
+});
+refreshFeedbackButton.addEventListener("click", loadFeedbackDashboard);
 searchForm.addEventListener("submit", searchKnowledge);
 uploadForm.addEventListener("submit", uploadKnowledgeFile);
 editForm.addEventListener("submit", saveEdit);

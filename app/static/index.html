@@ -40,6 +40,7 @@
           <div class="header-actions">
             <div class="knowledge-status" id="knowledge-status" title="正在读取知识库状态">知识库状态读取中...</div>
             <button class="secondary-button" id="knowledge-manager-toggle" type="button">管理资料</button>
+            <button class="secondary-button" id="feedback-dashboard-toggle" type="button">质量面板</button>
             <button class="secondary-button" id="rebuild-knowledge" type="button">重建知识库</button>
             <button class="icon-button" id="new-chat" type="button" title="开始新对话" aria-label="开始新对话">+</button>
           </div>
@@ -107,6 +108,32 @@
             <button type="submit">上传资料</button>
           </form>
           <p class="manager-status" id="entry-status" aria-live="polite"></p>
+        </section>
+
+        <section class="quality-dashboard is-hidden" id="quality-dashboard">
+          <div class="manager-heading">
+            <div>
+              <p class="eyebrow">回答质量</p>
+              <h2>基于真实反馈改进知识库</h2>
+            </div>
+            <button class="secondary-button" id="refresh-feedback" type="button">刷新数据</button>
+          </div>
+          <p class="dashboard-status" id="dashboard-status" aria-live="polite"></p>
+          <div class="metric-grid" id="feedback-metrics"></div>
+          <div class="dashboard-grid">
+            <section class="dashboard-section">
+              <p class="eyebrow">常见反馈原因</p>
+              <div class="insight-list" id="common-reasons"></div>
+            </section>
+            <section class="dashboard-section">
+              <p class="eyebrow">推荐改进动作</p>
+              <div class="insight-list" id="recommended-actions"></div>
+            </section>
+          </div>
+          <section class="dashboard-section recent-feedback-section">
+            <p class="eyebrow">最近的“没帮助”回答</p>
+            <div class="recent-feedback-list" id="recent-feedback-list"></div>
+          </section>
         </section>
 
         <form class="composer" id="ask-form">
