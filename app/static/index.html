@@ -90,6 +90,18 @@
               <button type="submit">保存资料</button>
             </form>
           </div>
+          <form class="upload-form" id="upload-form">
+            <div>
+              <p class="eyebrow">文件导入</p>
+              <h3>上传现有健康资料</h3>
+              <p>支持 UTF-8 编码的 `.md` 或 `.txt` 文件，单个文件不超过 200KB。文件名会作为资料标题。</p>
+            </div>
+            <label class="file-picker">
+              <span>选择文件</span>
+              <input id="upload-file" name="file" type="file" accept=".md,.txt,text/plain,text/markdown" required />
+            </label>
+            <button type="submit">上传资料</button>
+          </form>
           <p class="manager-status" id="entry-status" aria-live="polite"></p>
         </section>
 
@@ -111,6 +123,23 @@
         <p class="reference-excerpt"></p>
       </article>
     </template>
+    <dialog class="edit-dialog" id="edit-dialog">
+      <form id="edit-form">
+        <div class="dialog-heading">
+          <div>
+            <p class="eyebrow">编辑资料</p>
+            <h2 id="edit-title">编辑资料</h2>
+          </div>
+          <button class="dialog-close" id="edit-cancel" type="button" aria-label="关闭编辑窗口" title="关闭">x</button>
+        </div>
+        <div class="edit-fields" id="edit-fields"></div>
+        <p class="manager-status" id="edit-status" aria-live="polite"></p>
+        <div class="dialog-actions">
+          <button class="secondary-button" id="edit-cancel-bottom" type="button">取消</button>
+          <button class="primary-button" type="submit">保存修改</button>
+        </div>
+      </form>
+    </dialog>
     <script src="/static/app.js"></script>
   </body>
 </html>

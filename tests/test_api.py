@@ -59,6 +59,48 @@ def test_blank_knowledge_search_is_rejected(client):
     assert response.json()["detail"] == "搜索关键词不能为空"
 
 
+def test_condition_can_be_updated_and_deleted(client):
+    created = client.post(
+        "/conditions",
+        json={
+            "name": "待编辑病症",
+            "symptoms": "旧症状",
+            "treatment": "旧建议",
+        },
+    )
+    condition_id = created.json()["id"]
+
+    updated = client.put(
+        f"/conditions/{condition_id}",
+        json={
+            "name": "已编辑病症",
+            "symptoms": "新症状",
+            "treatment": "新建议",
+        },
+    )
+    assert updated.status_code == 200
+    assert updated.json()["name"] == "已编辑病症"
+
+    deleted = client.delete(f"/conditions/{condition_id}")
+    assert deleted.status_code == 204
+    assert client.get(f"/conditions/{condition_id}").status_code == 404
+
+
+def test_text_document_can_be_uploaded(client):
+    response = client.post(
+        "/documents/upload",
+        files={
+            "file": (
+                "睡眠提示.txt",
+                "保持规律作息，睡前避免长时间使用电子设备。".encode("utf-8"),
+                "text/plain",
+            )
+        },
+    )
+    assert response.status_code == 201
+    assert response.json()["title"] == "睡眠提示"
+
+
 def test_urgent_warning_bypasses_model_and_can_receive_feedback(client):
     ask_response = client.post(
         "/ask",

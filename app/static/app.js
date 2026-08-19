@@ -13,6 +13,45 @@ const searchInput = document.querySelector("#knowledge-query");
 const searchStatus = document.querySelector("#search-status");
 const searchResults = document.querySelector("#search-results");
 const entryStatus = document.querySelector("#entry-status");
+const uploadForm = document.querySelector("#upload-form");
+const uploadFile = document.querySelector("#upload-file");
+const editDialog = document.querySelector("#edit-dialog");
+const editForm = document.querySelector("#edit-form");
+const editTitle = document.querySelector("#edit-title");
+const editFields = document.querySelector("#edit-fields");
+const editStatus = document.querySelector("#edit-status");
+
+const entryConfiguration = {
+  condition: {
+    endpoint: "/conditions",
+    label: "病症",
+    fields: [
+      ["name", "病症名称", "input"],
+      ["symptoms", "常见症状", "textarea"],
+      ["treatment", "通用处理建议", "textarea"],
+    ],
+  },
+  drug: {
+    endpoint: "/drugs",
+    label: "药物",
+    fields: [
+      ["name", "药物名称", "input"],
+      ["effects", "药物作用", "textarea"],
+      ["instructions", "使用说明", "textarea"],
+    ],
+  },
+  document: {
+    endpoint: "/documents",
+    label: "资料",
+    fields: [
+      ["title", "资料标题", "input"],
+      ["source", "资料来源", "input"],
+      ["content", "资料内容", "textarea"],
+    ],
+  },
+};
+
+let activeEdit = null;
 
 let conversationId = createConversationId();
 
@@ -205,7 +244,18 @@ function renderSearchResults(data) {
     fields.textContent = `匹配字段：${item.matched_fields.join("、")}${item.source ? ` | 来源：${item.source}` : ""}`;
     const excerpt = document.createElement("p");
     excerpt.textContent = item.excerpt;
-    result.append(header, fields, excerpt);
+    const actions = document.createElement("div");
+    actions.className = "result-actions";
+    const editButton = document.createElement("button");
+    editButton.type = "button";
+    editButton.textContent = "编辑";
+    editButton.addEventListener("click", () => openEditDialog(item));
+    const deleteButton = document.createElement("button");
+    deleteButton.type = "button";
+    deleteButton.textContent = "删除";
+    deleteButton.addEventListener("click", () => deleteKnowledgeEntry(item));
+    actions.append(editButton, deleteButton);
+    result.append(header, fields, excerpt, actions);
     searchResults.append(result);
   }
 }
@@ -256,6 +306,132 @@ async function createKnowledgeEntry(formElement, endpoint) {
   }
 }
 
+async function uploadKnowledgeFile(event) {
+  event.preventDefault();
+  const file = uploadFile.files[0];
+  if (!file) return;
+
+  const submitButton = uploadForm.querySelector("button[type='submit']");
+  const formData = new FormData();
+  formData.append("file", file);
+  entryStatus.className = "manager-status";
+  entryStatus.textContent = `正在上传“${file.name}”...`;
+  submitButton.disabled = true;
+
+  try {
+    const response = await fetch("/documents/upload", {
+      method: "POST",
+      body: formData,
+    });
+    const data = await response.json();
+    if (!response.ok) throw new Error(getErrorMessage(data, "上传失败。"));
+    uploadForm.reset();
+    entryStatus.textContent = `已上传“${data.title}”。知识库已变为待重建状态。`;
+    await loadKnowledgeStatus();
+  } catch (error) {
+    entryStatus.className = "manager-status error";
+    entryStatus.textContent = `上传失败：${error.message}`;
+  } finally {
+    submitButton.disabled = false;
+  }
+}
+
+function closeEditDialog() {
+  editDialog.close();
+  activeEdit = null;
+  editFields.innerHTML = "";
+  editStatus.textContent = "";
+}
+
+async function openEditDialog(item) {
+  const config = entryConfiguration[item.type];
+  if (!config) return;
+
+  try {
+    const response = await fetch(`${config.endpoint}/${item.record_id}`);
+    const data = await response.json();
+    if (!response.ok) throw new Error(getErrorMessage(data, "读取资料失败。"));
+    activeEdit = { id: item.record_id, type: item.type, config };
+    editTitle.textContent = `编辑${config.label}：${data.name || data.title}`;
+    editFields.innerHTML = "";
+    for (const [name, label, controlType] of config.fields) {
+      const fieldLabel = document.createElement("label");
+      fieldLabel.textContent = label;
+      const control = document.createElement(controlType);
+      control.name = name;
+      control.required = true;
+      control.value = data[name];
+      if (controlType === "textarea") control.rows = name === "content" ? 8 : 4;
+      fieldLabel.append(control);
+      editFields.append(fieldLabel);
+    }
+    editDialog.showModal();
+  } catch (error) {
+    entryStatus.className = "manager-status error";
+    entryStatus.textContent = `无法打开编辑：${error.message}`;
+  }
+}
+
+async function saveEdit(event) {
+  event.preventDefault();
+  if (!activeEdit) return;
+  const saveButton = editForm.querySelector("button[type='submit']");
+  const payload = Object.fromEntries(new FormData(editForm).entries());
+  saveButton.disabled = true;
+  editStatus.className = "manager-status";
+  editStatus.textContent = "正在保存修改...";
+
+  try {
+    const response = await fetch(
+      `${activeEdit.config.endpoint}/${activeEdit.id}`,
+      {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      },
+    );
+    const data = await response.json();
+    if (!response.ok) throw new Error(getErrorMessage(data, "保存修改失败。"));
+    closeEditDialog();
+    entryStatus.className = "manager-status";
+    entryStatus.textContent = `已修改“${data.name || data.title}”。知识库已变为待重建状态。`;
+    await loadKnowledgeStatus();
+    if (searchInput.value.trim()) searchForm.requestSubmit();
+  } catch (error) {
+    editStatus.className = "manager-status error";
+    editStatus.textContent = `保存失败：${error.message}`;
+  } finally {
+    saveButton.disabled = false;
+  }
+}
+
+async function deleteKnowledgeEntry(item) {
+  const config = entryConfiguration[item.type];
+  if (!config) return;
+  const confirmed = window.confirm(
+    `确定删除${config.label}“${item.title}”吗？删除后无法恢复。`,
+  );
+  if (!confirmed) return;
+
+  entryStatus.className = "manager-status";
+  entryStatus.textContent = `正在删除“${item.title}”...`;
+  try {
+    const response = await fetch(`${config.endpoint}/${item.record_id}`, {
+      method: "DELETE",
+    });
+    if (!response.ok) {
+      const data = await response.json();
+      throw new Error(getErrorMessage(data, "删除失败。"));
+    }
+    entryStatus.textContent = `已删除“${item.title}”。知识库已变为待重建状态。`;
+    await loadKnowledgeStatus();
+    if (searchInput.value.trim()) searchForm.requestSubmit();
+  } catch (error) {
+    entryStatus.className = "manager-status error";
+    entryStatus.textContent = `删除失败：${error.message}`;
+  }
+}
+
 form.addEventListener("submit", async (event) => {
   event.preventDefault();
   const question = questionInput.value.trim();
@@ -295,6 +471,10 @@ managerToggleButton.addEventListener("click", () => {
   setManagerVisible(knowledgeManager.classList.contains("is-hidden"));
 });
 searchForm.addEventListener("submit", searchKnowledge);
+uploadForm.addEventListener("submit", uploadKnowledgeFile);
+editForm.addEventListener("submit", saveEdit);
+document.querySelector("#edit-cancel").addEventListener("click", closeEditDialog);
+document.querySelector("#edit-cancel-bottom").addEventListener("click", closeEditDialog);
 document.querySelector("#condition-form").addEventListener("submit", (event) => {
   event.preventDefault();
   createKnowledgeEntry(event.currentTarget, "/conditions");

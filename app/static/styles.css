@@ -112,6 +112,46 @@ h2 { font-size: 20px; margin: 0; }
 
 .entry-form button { align-self: flex-start; margin-top: auto; }
 
+.upload-form { align-items: center; border-top: 1px solid #dce4e5; display: grid; gap: 18px; grid-template-columns: minmax(0, 1fr) auto auto; margin-top: 26px; padding-top: 22px; }
+
+.upload-form h3 { font-size: 16px; margin: 0; }
+
+.upload-form p:last-child { color: #526166; font-size: 13px; line-height: 1.55; margin: 6px 0 0; }
+
+.file-picker { cursor: pointer; }
+
+.file-picker span { background: #ffffff; border: 1px solid #7c9f9e; border-radius: 5px; color: #1c5b5e; display: block; font-size: 13px; padding: 10px 12px; }
+
+.file-picker input { display: none; }
+
+.upload-form button, .primary-button { background: #21676a; border: 0; border-radius: 5px; color: #ffffff; cursor: pointer; min-height: 38px; padding: 0 16px; }
+
+.result-actions { display: flex; gap: 7px; margin-top: 10px; }
+
+.result-actions button { background: #ffffff; border: 1px solid #a8b9ba; border-radius: 4px; color: #315b5d; cursor: pointer; font-size: 12px; min-height: 29px; padding: 0 9px; }
+
+.result-actions button:last-child { border-color: #d5a49e; color: #97362d; }
+
+.edit-dialog { border: 1px solid #b9cecf; border-radius: 7px; box-shadow: 0 18px 45px rgb(23 33 43 / 25%); color: #17212b; max-width: 620px; padding: 0; width: calc(100% - 32px); }
+
+.edit-dialog::backdrop { background: rgb(18 58 61 / 45%); }
+
+.edit-dialog form { padding: 22px; }
+
+.dialog-heading { align-items: start; border-bottom: 1px solid #dce4e5; display: flex; justify-content: space-between; padding-bottom: 15px; }
+
+.dialog-close { background: transparent; border: 0; color: #526166; cursor: pointer; font-size: 20px; line-height: 1; }
+
+.edit-fields { display: grid; gap: 12px; margin-top: 18px; }
+
+.edit-fields label { color: #405258; display: grid; font-size: 13px; gap: 6px; }
+
+.edit-fields input, .edit-fields textarea { border: 1px solid #a8b9ba; border-radius: 5px; padding: 10px 11px; width: 100%; }
+
+.edit-fields textarea { resize: vertical; }
+
+.dialog-actions { display: flex; gap: 10px; justify-content: flex-end; }
+
 .welcome-message, .message { border-radius: 6px; line-height: 1.65; max-width: 720px; padding: 16px 18px; }
 
 .welcome-message { background: #ffffff; border: 1px solid #dce4e5; }
@@ -176,5 +216,6 @@ h2 { font-size: 20px; margin: 0; }
   .manager-heading { align-items: flex-start; flex-direction: column; gap: 10px; }
   .manager-grid { grid-template-columns: 1fr; }
   .knowledge-search { flex-direction: column; }
+  .upload-form { align-items: stretch; grid-template-columns: 1fr; }
   .composer { padding: 14px 16px; }
 }
