@@ -28,6 +28,12 @@ class FakeChatModel:
         self.call_count += 1
         return SimpleNamespace(content=self.answer)
 
+    def stream(self, _messages):
+        self.call_count += 1
+        midpoint = max(1, len(self.answer) // 2)
+        yield SimpleNamespace(content=self.answer[:midpoint])
+        yield SimpleNamespace(content=self.answer[midpoint:])
+
 
 def mock_current_knowledge_base(monkeypatch):
     monkeypatch.setattr(
@@ -292,3 +298,44 @@ def test_rag_rejects_requests_when_the_knowledge_base_is_outdated(
 
     assert response.status_code == 409
     assert response.json()["detail"] == "知识库已过期，请先执行 POST /knowledge/rebuild"
+
+
+def test_rag_streams_tokens_and_saves_the_completed_answer(client, monkeypatch):
+    mock_current_knowledge_base(monkeypatch)
+    vector_store = FakeVectorStore(
+        [
+            (
+                Document(
+                    page_content="布洛芬可用于缓解发热和疼痛。",
+                    metadata={"type": "drug", "record_id": 2, "name": "布洛芬"},
+                ),
+                0.9,
+            )
+        ]
+    )
+    chat_model = FakeChatModel(answer="这是分段返回的测试回答。")
+    monkeypatch.setattr(ask_router, "get_vector_store", lambda: vector_store)
+    monkeypatch.setattr(ask_router, "get_chat_model", lambda: chat_model)
+
+    response = client.post(
+        "/ask/stream",
+        json={
+            "conversation_id": "test-streaming-answer",
+            "question": "布洛芬有什么作用？",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("text/event-stream")
+    assert "event: metadata" in response.text
+    assert response.text.count("event: token") == 2
+    assert '"text": "这是分段返回"' in response.text
+    assert '"text": "的测试回答。"' in response.text
+    assert "event: done" in response.text
+    assert chat_model.call_count == 1
+
+    messages = client.get("/conversations/test-streaming-answer/messages")
+    assert [message["content"] for message in messages.json()] == [
+        "布洛芬有什么作用？",
+        "这是分段返回的测试回答。",
+    ]

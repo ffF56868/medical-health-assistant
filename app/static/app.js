@@ -82,47 +82,54 @@ function appendMessage(content, role, references = [], assistantMessageId = null
   }
 
   const text = document.createElement("p");
+  text.className = "message-content";
   text.textContent = content;
   message.append(text);
 
-  if (references.length > 0) {
-    const referenceSection = document.createElement("section");
-    referenceSection.className = "references";
-    const title = document.createElement("h3");
-    title.textContent = "参考资料";
-    referenceSection.append(title);
-
-    for (const reference of references) {
-      const item = referenceTemplate.content.cloneNode(true);
-      item.querySelector(".reference-name").textContent = reference.name;
-      item.querySelector(".reference-score").textContent = `相关度 ${Math.round(reference.relevance_score * 100)}%`;
-      item.querySelector(".reference-source").textContent = reference.source || reference.type;
-      item.querySelector(".reference-excerpt").textContent = reference.excerpt;
-      referenceSection.append(item);
-    }
-    message.append(referenceSection);
-  }
-
-  if (role === "assistant" && assistantMessageId) {
-    const feedback = document.createElement("div");
-    feedback.className = "feedback-controls";
-    feedback.innerHTML = `
-      <span>这条回答对你有帮助吗？</span>
-      <button type="button" data-helpful="true">有帮助</button>
-      <button type="button" data-helpful="false">没帮助</button>
-      <span class="feedback-status" aria-live="polite"></span>
-    `;
-    feedback.querySelectorAll("button").forEach((button) => {
-      button.addEventListener("click", () => {
-        const helpful = button.dataset.helpful === "true";
-        submitFeedback(feedback, assistantMessageId, helpful);
-      });
-    });
-    message.append(feedback);
-  }
+  appendReferences(message, references);
+  appendFeedback(message, role, assistantMessageId);
 
   messageList.append(message);
   scrollToLatestMessage();
+  return message;
+}
+
+function appendReferences(message, references) {
+  if (references.length === 0) return;
+  const referenceSection = document.createElement("section");
+  referenceSection.className = "references";
+  const title = document.createElement("h3");
+  title.textContent = "参考资料";
+  referenceSection.append(title);
+
+  for (const reference of references) {
+    const item = referenceTemplate.content.cloneNode(true);
+    item.querySelector(".reference-name").textContent = reference.name;
+    item.querySelector(".reference-score").textContent = `相关度 ${Math.round(reference.relevance_score * 100)}%`;
+    item.querySelector(".reference-source").textContent = reference.source || reference.type;
+    item.querySelector(".reference-excerpt").textContent = reference.excerpt;
+    referenceSection.append(item);
+  }
+  message.append(referenceSection);
+}
+
+function appendFeedback(message, role, assistantMessageId) {
+  if (role !== "assistant" || !assistantMessageId) return;
+  const feedback = document.createElement("div");
+  feedback.className = "feedback-controls";
+  feedback.innerHTML = `
+    <span>这条回答对你有帮助吗？</span>
+    <button type="button" data-helpful="true">有帮助</button>
+    <button type="button" data-helpful="false">没帮助</button>
+    <span class="feedback-status" aria-live="polite"></span>
+  `;
+  feedback.querySelectorAll("button").forEach((button) => {
+    button.addEventListener("click", () => {
+      const helpful = button.dataset.helpful === "true";
+      submitFeedback(feedback, assistantMessageId, helpful);
+    });
+  });
+  message.append(feedback);
 }
 
 async function submitFeedback(container, assistantMessageId, helpful) {
@@ -537,6 +544,65 @@ async function deleteKnowledgeEntry(item) {
   }
 }
 
+async function requestStreamingAnswer(question) {
+  const response = await fetch("/ask/stream", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ question, conversation_id: conversationId }),
+  });
+  if (!response.ok) {
+    const data = await response.json();
+    throw new Error(getErrorMessage(data, "请求失败，请稍后再试。"));
+  }
+  if (!response.body) throw new Error("浏览器不支持流式响应。");
+
+  const assistantMessage = appendMessage("", "assistant");
+  const answerText = assistantMessage.querySelector(".message-content");
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  let metadata = { references: [] };
+  let completed = false;
+
+  function processEvent(rawEvent) {
+    const lines = rawEvent.split("\n");
+    const eventLine = lines.find((line) => line.startsWith("event:"));
+    const dataLine = lines.find((line) => line.startsWith("data:"));
+    if (!eventLine || !dataLine) return;
+    const eventName = eventLine.slice(6).trim();
+    const data = JSON.parse(dataLine.slice(5).trim());
+
+    if (eventName === "metadata") {
+      metadata = data;
+    } else if (eventName === "token") {
+      answerText.textContent += data.text;
+      scrollToLatestMessage();
+    } else if (eventName === "done") {
+      appendReferences(assistantMessage, metadata.references || []);
+      appendFeedback(assistantMessage, "assistant", data.assistant_message_id);
+      completed = true;
+      scrollToLatestMessage();
+    } else if (eventName === "error") {
+      throw new Error(data.detail || "流式回答中断。");
+    }
+  }
+
+  while (true) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true }).replace(/\r/g, "");
+    let separatorIndex = buffer.indexOf("\n\n");
+    while (separatorIndex !== -1) {
+      const rawEvent = buffer.slice(0, separatorIndex);
+      buffer = buffer.slice(separatorIndex + 2);
+      processEvent(rawEvent);
+      separatorIndex = buffer.indexOf("\n\n");
+    }
+  }
+
+  if (!completed) throw new Error("回答未能完整生成，请重试。");
+}
+
 form.addEventListener("submit", async (event) => {
   event.preventDefault();
   const question = questionInput.value.trim();
@@ -548,19 +614,7 @@ form.addEventListener("submit", async (event) => {
   sendButton.textContent = "正在查询";
 
   try {
-    const response = await fetch("/ask", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ question, conversation_id: conversationId }),
-    });
-    const data = await response.json();
-    if (!response.ok) throw new Error(data.detail || "请求失败，请稍后再试。");
-    appendMessage(
-      data.answer,
-      "assistant",
-      data.references || [],
-      data.assistant_message_id,
-    );
+    await requestStreamingAnswer(question);
     loadConversationList();
   } catch (error) {
     appendMessage(`暂时无法回答：${error.message}`, "assistant");
