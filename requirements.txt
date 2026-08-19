@@ -4,3 +4,4 @@ sqlmodel
 langchain-chroma
 langchain-openai
 python-dotenv
+python-multipart

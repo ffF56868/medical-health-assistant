@@ -8,7 +8,7 @@ if not os.getenv("OPENAI_BASE_URL", "").strip():
     os.environ.pop("OPENAI_BASE_URL", None)
 
 from app.database import create_db_and_tables
-from app.routers import ask, conditions, drugs, knowledge
+from app.routers import ask, conditions, conversations, documents, drugs, knowledge
 
 
 app = FastAPI(
@@ -35,3 +35,5 @@ app.include_router(conditions.router)
 app.include_router(drugs.router)
 app.include_router(ask.router)
 app.include_router(knowledge.router)
+app.include_router(conversations.router)
+app.include_router(documents.router)

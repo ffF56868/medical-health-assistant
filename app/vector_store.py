@@ -1,4 +1,6 @@
 import os
+from hashlib import sha256
+import json
 from pathlib import Path
 
 from langchain_chroma import Chroma
@@ -6,7 +8,7 @@ from langchain_core.documents import Document
 from langchain_openai import OpenAIEmbeddings
 from sqlmodel import Session, select
 
-from app.models import Condition, Drug
+from app.models import Condition, Drug, KnowledgeDocument, KnowledgeIndexState
 
 
 COLLECTION_NAME = "medical_health_knowledge"
@@ -40,7 +42,11 @@ def build_knowledge_documents(session: Session) -> list[Document]:
                     f"常见症状：{condition.symptoms}\n"
                     f"处理建议：{condition.treatment}"
                 ),
-                metadata={"type": "condition", "record_id": condition.id},
+                metadata={
+                    "type": "condition",
+                    "record_id": condition.id,
+                    "name": condition.name,
+                },
             )
         )
 
@@ -53,11 +59,65 @@ def build_knowledge_documents(session: Session) -> list[Document]:
                     f"药物作用：{drug.effects}\n"
                     f"使用说明：{drug.instructions}"
                 ),
-                metadata={"type": "drug", "record_id": drug.id},
+                metadata={
+                    "type": "drug",
+                    "record_id": drug.id,
+                    "name": drug.name,
+                },
+            )
+        )
+
+    knowledge_documents = session.exec(
+        select(KnowledgeDocument).order_by(KnowledgeDocument.id)
+    ).all()
+    for knowledge_document in knowledge_documents:
+        documents.append(
+            Document(
+                page_content=(
+                    f"资料标题：{knowledge_document.title}\n"
+                    f"资料来源：{knowledge_document.source}\n"
+                    f"资料内容：{knowledge_document.content}"
+                ),
+                metadata={
+                    "type": "document",
+                    "record_id": knowledge_document.id,
+                    "name": knowledge_document.title,
+                    "source": knowledge_document.source,
+                },
             )
         )
 
     return documents
+
+
+def get_knowledge_fingerprint(documents: list[Document]) -> str:
+    content = [
+        {
+            "page_content": document.page_content,
+            "metadata": document.metadata,
+        }
+        for document in documents
+    ]
+    serialized = json.dumps(content, ensure_ascii=False, sort_keys=True)
+    return sha256(serialized.encode("utf-8")).hexdigest()
+
+
+def get_knowledge_status(session: Session) -> dict:
+    documents = build_knowledge_documents(session)
+    current_hash = get_knowledge_fingerprint(documents)
+    index_state = session.get(KnowledgeIndexState, 1)
+
+    return {
+        "is_current": (
+            index_state is not None
+            and index_state.content_hash == current_hash
+        ),
+        "document_count": len(documents),
+        "indexed_document_count": (
+            index_state.document_count if index_state is not None else None
+        ),
+        "indexed_at": index_state.indexed_at if index_state is not None else None,
+    }
 
 
 def rebuild_vector_store(session: Session) -> int:
@@ -73,5 +133,13 @@ def rebuild_vector_store(session: Session) -> int:
             for document in documents
         ]
         vector_store.add_documents(documents=documents, ids=ids)
+
+    index_state = KnowledgeIndexState(
+        id=1,
+        content_hash=get_knowledge_fingerprint(documents),
+        document_count=len(documents),
+    )
+    session.merge(index_state)
+    session.commit()
 
     return len(documents)

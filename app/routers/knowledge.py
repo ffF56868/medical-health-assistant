@@ -2,11 +2,16 @@ from fastapi import APIRouter, Depends
 from sqlmodel import Session
 
 from app.database import get_session
-from app.schemas import KnowledgeRebuildResponse
-from app.vector_store import rebuild_vector_store
+from app.schemas import KnowledgeRebuildResponse, KnowledgeStatusResponse
+from app.vector_store import get_knowledge_status, rebuild_vector_store
 
 
 router = APIRouter(prefix="/knowledge", tags=["knowledge"])
+
+
+@router.get("/status", response_model=KnowledgeStatusResponse)
+def get_status(session: Session = Depends(get_session)):
+    return get_knowledge_status(session)
 
 
 @router.post("/rebuild", response_model=KnowledgeRebuildResponse)

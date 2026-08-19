@@ -1,3 +1,5 @@
+from datetime import datetime
+
 from pydantic import field_validator
 from sqlmodel import Field, SQLModel
 
@@ -44,10 +46,28 @@ class DrugRead(DrugCreate):
     id: int
 
 
+class KnowledgeDocumentCreate(SQLModel):
+    title: str = Field(min_length=1, max_length=200)
+    content: str = Field(min_length=1, max_length=20000)
+    source: str = Field(default="manual", min_length=1, max_length=200)
+
+    _strip_title = field_validator("title", mode="before")(strip_required_text)
+    _strip_content = field_validator("content", mode="before")(strip_required_text)
+    _strip_source = field_validator("source", mode="before")(strip_required_text)
+
+
+class KnowledgeDocumentRead(KnowledgeDocumentCreate):
+    id: int
+
+
 class AskRequest(SQLModel):
     question: str = Field(min_length=1, max_length=1000)
+    conversation_id: str = Field(default="default", min_length=1, max_length=100)
 
     _strip_question = field_validator("question", mode="before")(
+        strip_required_text
+    )
+    _strip_conversation_id = field_validator("conversation_id", mode="before")(
         strip_required_text
     )
 
@@ -56,8 +76,25 @@ class AskResponse(SQLModel):
     question: str
     answer: str
     source: str
+    conversation_id: str
+    references: list[str] = Field(default_factory=list)
+
+
+class ChatMessageRead(SQLModel):
+    id: int
+    conversation_id: str
+    role: str
+    content: str
+    created_at: datetime
 
 
 class KnowledgeRebuildResponse(SQLModel):
     message: str
     document_count: int
+
+
+class KnowledgeStatusResponse(SQLModel):
+    is_current: bool
+    document_count: int
+    indexed_document_count: int | None = None
+    indexed_at: datetime | None = None
