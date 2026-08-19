@@ -1,8 +1,10 @@
+.git/
 .venv/
 .pytest_cache/
 __pycache__/
 *.pyc
 .env
-database.db
 medical_health.db
 chroma_db/
+tests/
+sample_documents/

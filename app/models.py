@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import UTC, datetime
 
 from sqlmodel import Field, SQLModel
 
@@ -29,7 +29,10 @@ class ChatMessage(SQLModel, table=True):
     conversation_id: str = Field(index=True, max_length=100)
     role: str = Field(max_length=20)
     content: str = Field(max_length=10000)
-    created_at: datetime = Field(default_factory=datetime.utcnow, index=True)
+    created_at: datetime = Field(
+        default_factory=lambda: datetime.now(UTC),
+        index=True,
+    )
 
 
 class AnswerFeedback(SQLModel, table=True):
@@ -37,11 +40,14 @@ class AnswerFeedback(SQLModel, table=True):
     assistant_message_id: int = Field(index=True, unique=True)
     helpful: bool
     reason: str | None = Field(default=None, max_length=1000)
-    created_at: datetime = Field(default_factory=datetime.utcnow, index=True)
+    created_at: datetime = Field(
+        default_factory=lambda: datetime.now(UTC),
+        index=True,
+    )
 
 
 class KnowledgeIndexState(SQLModel, table=True):
     id: int = Field(default=1, primary_key=True)
     content_hash: str = Field(max_length=64)
     document_count: int
-    indexed_at: datetime = Field(default_factory=datetime.utcnow)
+    indexed_at: datetime = Field(default_factory=lambda: datetime.now(UTC))

@@ -152,7 +152,8 @@ def ask_question(
             str(document.metadata.get("type", "unknown")),
             str(document.metadata.get("record_id", document.metadata.get("name"))),
         )
-        if source_key not in best_matches:
+        previous_match = best_matches.get(source_key)
+        if previous_match is None or score > previous_match[1]:
             best_matches[source_key] = (document, score)
 
     relevant_matches = sorted(

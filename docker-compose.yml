@@ -1,0 +1,35 @@
+name: medical-health-assistant
+
+services:
+  api:
+    build:
+      context: .
+      args:
+        HTTP_PROXY: ${DOCKER_HTTP_PROXY:-http://host.docker.internal:23567}
+        HTTPS_PROXY: ${DOCKER_HTTPS_PROXY:-http://host.docker.internal:23567}
+        NO_PROXY: localhost,127.0.0.1
+    ports:
+      - "8003:8003"
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: sqlite:////app/data/medical_health.db
+      CHROMA_DIR: /app/data/chroma_db
+      HTTP_PROXY: ${DOCKER_HTTP_PROXY:-http://host.docker.internal:23567}
+      HTTPS_PROXY: ${DOCKER_HTTPS_PROXY:-http://host.docker.internal:23567}
+      NO_PROXY: localhost,127.0.0.1
+    volumes:
+      - medical_health_data:/app/data
+    restart: unless-stopped
+    healthcheck:
+      test:
+        ["CMD", "python", "-c", "from urllib.request import urlopen; urlopen('http://127.0.0.1:8003/health')"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+volumes:
+  medical_health_data:
+    external: true
+    name: medical-health-assistant_medical_health_data
