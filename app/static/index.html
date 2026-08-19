@@ -33,7 +33,11 @@
             <p class="eyebrow">在线</p>
             <h2>健康知识问答</h2>
           </div>
-          <button class="icon-button" id="new-chat" type="button" title="开始新对话" aria-label="开始新对话">+</button>
+          <div class="header-actions">
+            <div class="knowledge-status" id="knowledge-status" title="正在读取知识库状态">知识库状态读取中...</div>
+            <button class="secondary-button" id="rebuild-knowledge" type="button">重建知识库</button>
+            <button class="icon-button" id="new-chat" type="button" title="开始新对话" aria-label="开始新对话">+</button>
+          </div>
         </header>
 
         <section class="message-list" id="message-list" aria-live="polite">
