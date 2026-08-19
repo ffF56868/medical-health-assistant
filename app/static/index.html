@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>医疗健康助手</title>
+    <link rel="preconnect" href="https://images.unsplash.com" />
+    <link rel="stylesheet" href="/static/styles.css" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <aside class="side-panel">
+        <div class="brand">
+          <span class="brand-mark" aria-hidden="true">+</span>
+          <span>医疗健康助手</span>
+        </div>
+        <div class="side-content">
+          <p class="eyebrow">知识库问答</p>
+          <h1>基于资料，回答健康问题</h1>
+          <p class="side-copy">回答会检索项目中的病症、药物和健康资料，并列出参考来源。</p>
+          <img
+            class="knowledge-image"
+            src="https://images.unsplash.com/photo-1576091160399-112ba8d25d1d?auto=format&fit=crop&w=900&q=80"
+            alt="医生查看医疗资料"
+          />
+        </div>
+        <p class="side-footnote">仅供健康信息参考，不代替医生诊断或处方。</p>
+      </aside>
+
+      <main class="chat-area">
+        <header class="chat-header">
+          <div>
+            <p class="eyebrow">在线</p>
+            <h2>健康知识问答</h2>
+          </div>
+          <button class="icon-button" id="new-chat" type="button" title="开始新对话" aria-label="开始新对话">+</button>
+        </header>
+
+        <section class="message-list" id="message-list" aria-live="polite">
+          <div class="welcome-message">
+            <p class="message-label">医疗健康助手</p>
+            <p>你好，可以根据已有资料向我提问，例如“布洛芬有什么作用？”或“睡眠不足时有哪些通用健康建议？”</p>
+          </div>
+        </section>
+
+        <form class="composer" id="ask-form">
+          <label class="sr-only" for="question">输入健康问题</label>
+          <textarea id="question" rows="1" maxlength="1000" placeholder="输入你的健康问题..." required></textarea>
+          <button id="send-button" type="submit">发送</button>
+          <p class="composer-note">如出现呼吸困难、持续胸痛、意识改变等紧急情况，请立即寻求紧急医疗帮助。</p>
+        </form>
+      </main>
+    </div>
+    <template id="reference-template">
+      <article class="reference-item">
+        <div class="reference-heading">
+          <strong class="reference-name"></strong>
+          <span class="reference-score"></span>
+        </div>
+        <p class="reference-source"></p>
+        <p class="reference-excerpt"></p>
+      </article>
+    </template>
+    <script src="/static/app.js"></script>
+  </body>
+</html>

@@ -1,0 +1,15 @@
+name: medical-health-tests
+
+services:
+  test:
+    image: medical-health-assistant-test:latest
+    build:
+      context: .
+      args:
+        HTTP_PROXY: ${DOCKER_HTTP_PROXY:-http://host.docker.internal:23567}
+        HTTPS_PROXY: ${DOCKER_HTTPS_PROXY:-http://host.docker.internal:23567}
+        NO_PROXY: localhost,127.0.0.1
+    command: pytest -q
+    environment:
+      DATABASE_URL: sqlite:////tmp/medical_health_test.db
+      CHROMA_DIR: /tmp/chroma_test
