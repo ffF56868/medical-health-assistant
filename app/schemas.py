@@ -77,6 +77,7 @@ class ReferenceRead(SQLModel):
     type: str
     source: str | None = None
     excerpt: str
+    relevance_score: float
 
 
 class AskResponse(SQLModel):
@@ -84,6 +85,7 @@ class AskResponse(SQLModel):
     answer: str
     source: str
     conversation_id: str
+    assistant_message_id: int
     references: list[ReferenceRead] = Field(default_factory=list)
 
 
@@ -93,6 +95,34 @@ class ChatMessageRead(SQLModel):
     role: str
     content: str
     created_at: datetime
+
+
+def normalize_optional_text(value: str | None) -> str | None:
+    if value is None:
+        return None
+    return value.strip() or None
+
+
+class FeedbackCreate(SQLModel):
+    assistant_message_id: int = Field(gt=0)
+    helpful: bool
+    reason: str | None = Field(default=None, max_length=1000)
+
+    _normalize_reason = field_validator("reason", mode="before")(
+        normalize_optional_text
+    )
+
+
+class FeedbackRead(FeedbackCreate):
+    id: int
+    created_at: datetime
+
+
+class FeedbackSummary(SQLModel):
+    total_count: int
+    helpful_count: int
+    not_helpful_count: int
+    helpful_rate: float | None = None
 
 
 class KnowledgeRebuildResponse(SQLModel):
@@ -107,3 +137,12 @@ class KnowledgeStatusResponse(SQLModel):
     chunk_count: int
     indexed_document_count: int | None = None
     indexed_at: datetime | None = None
+
+
+class HealthResponse(SQLModel):
+    status: str
+    service: str
+    database: str
+    knowledge_base_current: bool
+    document_count: int
+    chunk_count: int
