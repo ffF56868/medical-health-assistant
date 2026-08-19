@@ -125,6 +125,44 @@ class FeedbackSummary(SQLModel):
     helpful_rate: float | None = None
 
 
+class FeedbackDetail(SQLModel):
+    id: int
+    assistant_message_id: int
+    conversation_id: str
+    question: str | None = None
+    answer: str
+    helpful: bool
+    reason: str | None = None
+    created_at: datetime
+
+
+class FeedbackGroup(SQLModel):
+    text: str
+    count: int
+
+
+class FeedbackImprovementSuggestions(SQLModel):
+    not_helpful_count: int
+    common_reasons: list[FeedbackGroup] = Field(default_factory=list)
+    repeated_questions: list[FeedbackGroup] = Field(default_factory=list)
+    recommended_actions: list[str] = Field(default_factory=list)
+
+
+class KnowledgeSearchItem(SQLModel):
+    type: str
+    record_id: int
+    title: str
+    source: str | None = None
+    matched_fields: list[str]
+    excerpt: str
+
+
+class KnowledgeSearchResponse(SQLModel):
+    query: str
+    total_count: int
+    results: list[KnowledgeSearchItem] = Field(default_factory=list)
+
+
 class KnowledgeRebuildResponse(SQLModel):
     message: str
     document_count: int
