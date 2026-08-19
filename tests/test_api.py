@@ -101,6 +101,30 @@ def test_text_document_can_be_uploaded(client):
     assert response.json()["title"] == "睡眠提示"
 
 
+def test_conversation_can_be_listed_read_and_deleted(client):
+    ask_response = client.post(
+        "/ask",
+        json={
+            "conversation_id": "test-conversation-history",
+            "question": "我出现持续胸痛怎么办？",
+        },
+    )
+    assert ask_response.status_code == 200
+
+    summaries = client.get("/conversations")
+    assert summaries.status_code == 200
+    assert summaries.json()[0]["conversation_id"] == "test-conversation-history"
+    assert summaries.json()[0]["message_count"] == 2
+
+    messages = client.get("/conversations/test-conversation-history/messages")
+    assert messages.status_code == 200
+    assert len(messages.json()) == 2
+
+    deleted = client.delete("/conversations/test-conversation-history/messages")
+    assert deleted.status_code == 204
+    assert client.get("/conversations").json() == []
+
+
 def test_urgent_warning_bypasses_model_and_can_receive_feedback(client):
     ask_response = client.post(
         "/ask",

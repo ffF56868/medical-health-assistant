@@ -97,6 +97,13 @@ class ChatMessageRead(SQLModel):
     created_at: datetime
 
 
+class ConversationSummary(SQLModel):
+    conversation_id: str
+    preview: str
+    message_count: int
+    updated_at: datetime
+
+
 def normalize_optional_text(value: str | None) -> str | None:
     if value is None:
         return None

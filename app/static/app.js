@@ -20,6 +20,8 @@ const editForm = document.querySelector("#edit-form");
 const editTitle = document.querySelector("#edit-title");
 const editFields = document.querySelector("#edit-fields");
 const editStatus = document.querySelector("#edit-status");
+const historyList = document.querySelector("#history-list");
+const refreshHistoryButton = document.querySelector("#refresh-history");
 
 const entryConfiguration = {
   condition: {
@@ -53,10 +55,15 @@ const entryConfiguration = {
 
 let activeEdit = null;
 
-let conversationId = createConversationId();
+const ACTIVE_CONVERSATION_KEY = "medical-health-active-conversation";
+let conversationId = localStorage.getItem(ACTIVE_CONVERSATION_KEY) || createConversationId();
 
 function createConversationId() {
   return `web-${crypto.randomUUID()}`;
+}
+
+function saveActiveConversation() {
+  localStorage.setItem(ACTIVE_CONVERSATION_KEY, conversationId);
 }
 
 function scrollToLatestMessage() {
@@ -151,9 +158,107 @@ async function submitFeedback(container, assistantMessageId, helpful) {
 
 function resetConversation() {
   conversationId = createConversationId();
+  saveActiveConversation();
   messageList.innerHTML = "";
   appendMessage("已开始新的对话。你可以继续向我询问健康资料中的内容。", "assistant");
+  loadConversationList();
   questionInput.focus();
+}
+
+function renderWelcomeMessage() {
+  messageList.innerHTML = `
+    <div class="welcome-message">
+      <p class="message-label">医疗健康助手</p>
+      <p>你好，可以根据已有资料向我提问，例如“布洛芬有什么作用？”或“睡眠不足时有哪些通用健康建议？”</p>
+    </div>
+  `;
+}
+
+function renderConversationHistory(conversations) {
+  historyList.innerHTML = "";
+  if (conversations.length === 0) {
+    historyList.innerHTML = '<p class="history-empty">暂无已保存的对话</p>';
+    return;
+  }
+
+  for (const conversation of conversations) {
+    const row = document.createElement("div");
+    row.className = "history-item";
+    const openButton = document.createElement("button");
+    openButton.type = "button";
+    openButton.textContent = conversation.preview;
+    openButton.title = conversation.preview;
+    openButton.classList.toggle("active", conversation.conversation_id === conversationId);
+    openButton.addEventListener("click", () => loadConversation(conversation.conversation_id));
+    const deleteButton = document.createElement("button");
+    deleteButton.type = "button";
+    deleteButton.className = "delete-history";
+    deleteButton.textContent = "x";
+    deleteButton.title = "删除此对话";
+    deleteButton.setAttribute("aria-label", "删除此对话");
+    deleteButton.addEventListener("click", () => deleteConversation(conversation));
+    row.append(openButton, deleteButton);
+    historyList.append(row);
+  }
+}
+
+async function loadConversationList() {
+  try {
+    const response = await fetch("/conversations");
+    const data = await response.json();
+    if (!response.ok) throw new Error(getErrorMessage(data, "读取对话列表失败。"));
+    renderConversationHistory(data);
+  } catch (error) {
+    historyList.innerHTML = '<p class="history-empty">历史对话暂时无法读取</p>';
+  }
+}
+
+async function loadConversation(nextConversationId) {
+  try {
+    const response = await fetch(
+      `/conversations/${encodeURIComponent(nextConversationId)}/messages`,
+    );
+    const messages = await response.json();
+    if (!response.ok) throw new Error(getErrorMessage(messages, "读取对话失败。"));
+    conversationId = nextConversationId;
+    saveActiveConversation();
+    messageList.innerHTML = "";
+    for (const message of messages) {
+      appendMessage(
+        message.content,
+        message.role === "user" ? "user" : "assistant",
+        [],
+        message.role === "assistant" ? message.id : null,
+      );
+    }
+    if (messages.length === 0) renderWelcomeMessage();
+    loadConversationList();
+    setManagerVisible(false);
+  } catch (error) {
+    appendMessage(`无法加载历史对话：${error.message}`, "assistant");
+  }
+}
+
+async function deleteConversation(conversation) {
+  const confirmed = window.confirm(
+    `确定删除这段对话“${conversation.preview}”吗？其中的反馈也会同时删除。`,
+  );
+  if (!confirmed) return;
+
+  try {
+    const response = await fetch(
+      `/conversations/${encodeURIComponent(conversation.conversation_id)}/messages`,
+      { method: "DELETE" },
+    );
+    if (!response.ok) {
+      const data = await response.json();
+      throw new Error(getErrorMessage(data, "删除对话失败。"));
+    }
+    if (conversation.conversation_id === conversationId) resetConversation();
+    await loadConversationList();
+  } catch (error) {
+    window.alert(`删除失败：${error.message}`);
+  }
 }
 
 function showKnowledgeStatus(data) {
@@ -456,6 +561,7 @@ form.addEventListener("submit", async (event) => {
       data.references || [],
       data.assistant_message_id,
     );
+    loadConversationList();
   } catch (error) {
     appendMessage(`暂时无法回答：${error.message}`, "assistant");
   } finally {
@@ -466,6 +572,7 @@ form.addEventListener("submit", async (event) => {
 });
 
 newChatButton.addEventListener("click", resetConversation);
+refreshHistoryButton.addEventListener("click", loadConversationList);
 rebuildKnowledgeButton.addEventListener("click", rebuildKnowledge);
 managerToggleButton.addEventListener("click", () => {
   setManagerVisible(knowledgeManager.classList.contains("is-hidden"));
@@ -488,6 +595,9 @@ document.querySelector("#document-form").addEventListener("submit", (event) => {
   createKnowledgeEntry(event.currentTarget, "/documents");
 });
 loadKnowledgeStatus();
+saveActiveConversation();
+loadConversationList();
+loadConversation(conversationId);
 
 questionInput.addEventListener("keydown", (event) => {
   if (event.key === "Enter" && !event.shiftKey) {

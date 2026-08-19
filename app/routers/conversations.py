@@ -1,12 +1,51 @@
-from fastapi import APIRouter, Depends, HTTPException, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from sqlmodel import Session, select
 
 from app.database import get_session
 from app.models import AnswerFeedback, ChatMessage
-from app.schemas import ChatMessageRead
+from app.schemas import ChatMessageRead, ConversationSummary
 
 
 router = APIRouter(prefix="/conversations", tags=["conversations"])
+
+
+@router.get("", response_model=list[ConversationSummary])
+def list_conversations(
+    limit: int = Query(default=30, ge=1, le=100),
+    session: Session = Depends(get_session),
+):
+    messages = session.exec(
+        select(ChatMessage).order_by(ChatMessage.created_at, ChatMessage.id)
+    ).all()
+    grouped_messages: dict[str, list[ChatMessage]] = {}
+    for message in messages:
+        grouped_messages.setdefault(message.conversation_id, []).append(message)
+
+    summaries: list[ConversationSummary] = []
+    for conversation_id, conversation_messages in grouped_messages.items():
+        first_user_message = next(
+            (
+                message.content
+                for message in conversation_messages
+                if message.role == "user"
+            ),
+            conversation_messages[0].content,
+        )
+        latest_message = conversation_messages[-1]
+        summaries.append(
+            ConversationSummary(
+                conversation_id=conversation_id,
+                preview=first_user_message[:80],
+                message_count=len(conversation_messages),
+                updated_at=latest_message.created_at,
+            )
+        )
+
+    return sorted(
+        summaries,
+        key=lambda summary: summary.updated_at,
+        reverse=True,
+    )[:limit]
 
 
 @router.get("/{conversation_id}/messages", response_model=list[ChatMessageRead])

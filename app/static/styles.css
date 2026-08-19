@@ -18,7 +18,27 @@ button, textarea { font: inherit; }
 
 .brand-mark { align-items: center; background: #d9ef61; border-radius: 6px; color: #123a3d; display: inline-flex; font-size: 26px; font-weight: 400; height: 30px; justify-content: center; line-height: 1; width: 30px; }
 
-.side-content { margin-top: auto; }
+.conversation-history { margin-top: 28px; min-height: 0; }
+
+.history-heading { align-items: center; display: flex; justify-content: space-between; }
+
+.history-heading .eyebrow { margin: 0; }
+
+.history-heading button { background: transparent; border: 0; color: #d9ef61; cursor: pointer; font-size: 20px; padding: 0 2px; }
+
+.history-list { display: grid; gap: 5px; margin-top: 9px; max-height: 240px; overflow-y: auto; }
+
+.history-empty { color: #bcd1ce; font-size: 12px; margin: 0; padding: 8px 0; }
+
+.history-item { align-items: center; display: grid; gap: 5px; grid-template-columns: minmax(0, 1fr) 28px; }
+
+.history-item button { background: transparent; border: 0; color: #e2eeeb; cursor: pointer; min-height: 32px; overflow: hidden; padding: 7px 6px; text-align: left; text-overflow: ellipsis; white-space: nowrap; }
+
+.history-item button:hover, .history-item button.active { background: #28585a; border-radius: 4px; }
+
+.history-item .delete-history { color: #bcd1ce; font-size: 17px; padding: 0; text-align: center; }
+
+.side-content { margin-top: 24px; }
 
 .eyebrow { color: #658789; font-size: 13px; margin: 0 0 8px; }
 
@@ -31,8 +51,6 @@ h1 { font-size: 26px; line-height: 1.25; margin: 0; }
 h2 { font-size: 20px; margin: 0; }
 
 .side-copy { color: #d9e8e5; font-size: 14px; line-height: 1.65; margin: 15px 0 20px; }
-
-.knowledge-image { border-radius: 6px; display: block; height: 170px; object-fit: cover; width: 100%; }
 
 .side-footnote { color: #bcd1ce; font-size: 12px; line-height: 1.55; margin: 28px 0 0; }
 
