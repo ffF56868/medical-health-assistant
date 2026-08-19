@@ -3,5 +3,6 @@ uvicorn[standard]
 sqlmodel
 langchain-chroma
 langchain-openai
+langchain-text-splitters
 python-dotenv
 python-multipart

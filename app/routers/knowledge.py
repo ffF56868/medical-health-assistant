@@ -16,8 +16,9 @@ def get_status(session: Session = Depends(get_session)):
 
 @router.post("/rebuild", response_model=KnowledgeRebuildResponse)
 def rebuild_knowledge(session: Session = Depends(get_session)):
-    document_count = rebuild_vector_store(session)
+    document_count, chunk_count = rebuild_vector_store(session)
     return KnowledgeRebuildResponse(
         message="知识库向量重建完成",
         document_count=document_count,
+        chunk_count=chunk_count,
     )

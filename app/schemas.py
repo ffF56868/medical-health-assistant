@@ -72,12 +72,19 @@ class AskRequest(SQLModel):
     )
 
 
+class ReferenceRead(SQLModel):
+    name: str
+    type: str
+    source: str | None = None
+    excerpt: str
+
+
 class AskResponse(SQLModel):
     question: str
     answer: str
     source: str
     conversation_id: str
-    references: list[str] = Field(default_factory=list)
+    references: list[ReferenceRead] = Field(default_factory=list)
 
 
 class ChatMessageRead(SQLModel):
@@ -91,10 +98,12 @@ class ChatMessageRead(SQLModel):
 class KnowledgeRebuildResponse(SQLModel):
     message: str
     document_count: int
+    chunk_count: int
 
 
 class KnowledgeStatusResponse(SQLModel):
     is_current: bool
     document_count: int
+    chunk_count: int
     indexed_document_count: int | None = None
     indexed_at: datetime | None = None

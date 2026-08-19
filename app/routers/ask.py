@@ -65,7 +65,7 @@ def ask_question(
         vector_store = get_vector_store()
         matches = vector_store.similarity_search_with_relevance_scores(
             retrieval_query,
-            k=3,
+            k=8,
         )
     except Exception as error:
         raise HTTPException(
@@ -73,10 +73,25 @@ def ask_question(
             detail="知识库暂时不可用，请确认已执行 /knowledge/rebuild",
         ) from error
 
+    # Each source may have several chunks. Keep only its best matching chunk.
+    best_matches: dict[tuple[str, str], tuple[object, float]] = {}
+    for document, score in matches:
+        if score < 0.3:
+            continue
+        source_key = (
+            str(document.metadata.get("type", "unknown")),
+            str(document.metadata.get("record_id", document.metadata.get("name"))),
+        )
+        if source_key not in best_matches:
+            best_matches[source_key] = (document, score)
+
     relevant_documents = [
         document
-        for document, score in matches
-        if score >= 0.3
+        for document, _ in sorted(
+            best_matches.values(),
+            key=lambda item: item[1],
+            reverse=True,
+        )[:3]
     ]
 
     if not relevant_documents:
@@ -97,7 +112,12 @@ def ask_question(
         for document in relevant_documents
     )
     references = [
-        document.metadata.get("name", "未命名资料")
+        {
+            "name": document.metadata.get("name", "未命名资料"),
+            "type": document.metadata.get("type", "unknown"),
+            "source": document.metadata.get("source"),
+            "excerpt": document.page_content.replace("\n", " ")[:180],
+        }
         for document in relevant_documents
     ]
 

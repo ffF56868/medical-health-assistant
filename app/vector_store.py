@@ -6,12 +6,18 @@ from pathlib import Path
 from langchain_chroma import Chroma
 from langchain_core.documents import Document
 from langchain_openai import OpenAIEmbeddings
+from langchain_text_splitters import RecursiveCharacterTextSplitter
 from sqlmodel import Session, select
 
 from app.models import Condition, Drug, KnowledgeDocument, KnowledgeIndexState
 
 
 COLLECTION_NAME = "medical_health_knowledge"
+TEXT_SPLITTER = RecursiveCharacterTextSplitter(
+    chunk_size=500,
+    chunk_overlap=80,
+    separators=["\n\n", "\n", "。", "！", "？", "；", "，", ""],
+)
 
 
 def get_vector_store() -> Chroma:
@@ -87,7 +93,14 @@ def build_knowledge_documents(session: Session) -> list[Document]:
             )
         )
 
-    return documents
+    chunks: list[Document] = []
+    for document in documents:
+        split_documents = TEXT_SPLITTER.split_documents([document])
+        for chunk_index, chunk in enumerate(split_documents):
+            chunk.metadata["chunk_index"] = chunk_index
+            chunks.append(chunk)
+
+    return chunks
 
 
 def get_knowledge_fingerprint(documents: list[Document]) -> str:
@@ -106,13 +119,22 @@ def get_knowledge_status(session: Session) -> dict:
     documents = build_knowledge_documents(session)
     current_hash = get_knowledge_fingerprint(documents)
     index_state = session.get(KnowledgeIndexState, 1)
+    source_document_count = sum(
+        len(records)
+        for records in (
+            session.exec(select(Condition)).all(),
+            session.exec(select(Drug)).all(),
+            session.exec(select(KnowledgeDocument)).all(),
+        )
+    )
 
     return {
         "is_current": (
             index_state is not None
             and index_state.content_hash == current_hash
         ),
-        "document_count": len(documents),
+        "document_count": source_document_count,
+        "chunk_count": len(documents),
         "indexed_document_count": (
             index_state.document_count if index_state is not None else None
         ),
@@ -120,7 +142,7 @@ def get_knowledge_status(session: Session) -> dict:
     }
 
 
-def rebuild_vector_store(session: Session) -> int:
+def rebuild_vector_store(session: Session) -> tuple[int, int]:
     documents = build_knowledge_documents(session)
     vector_store = get_vector_store()
 
@@ -129,7 +151,13 @@ def rebuild_vector_store(session: Session) -> int:
 
     if documents:
         ids = [
-            f"{document.metadata['type']}-{document.metadata['record_id']}"
+            "-".join(
+                [
+                    document.metadata["type"],
+                    str(document.metadata["record_id"]),
+                    str(document.metadata["chunk_index"]),
+                ]
+            )
             for document in documents
         ]
         vector_store.add_documents(documents=documents, ids=ids)
@@ -142,4 +170,12 @@ def rebuild_vector_store(session: Session) -> int:
     session.merge(index_state)
     session.commit()
 
-    return len(documents)
+    source_document_count = sum(
+        len(records)
+        for records in (
+            session.exec(select(Condition)).all(),
+            session.exec(select(Drug)).all(),
+            session.exec(select(KnowledgeDocument)).all(),
+        )
+    )
+    return source_document_count, len(documents)
