@@ -163,6 +163,18 @@
             <p class="eyebrow">最近的“没帮助”回答</p>
             <div class="recent-feedback-list" id="recent-feedback-list"></div>
           </section>
+          <section class="dashboard-section evaluation-section" aria-labelledby="evaluation-title">
+            <div class="evaluation-heading">
+              <div>
+                <p class="eyebrow">检索评测</p>
+                <h3 id="evaluation-title">RAG 基准评测</h3>
+              </div>
+              <button class="secondary-button" id="run-rag-evaluation" type="button">运行评测</button>
+            </div>
+            <p class="evaluation-status" id="evaluation-status" aria-live="polite"></p>
+            <div class="evaluation-metrics" id="evaluation-metrics"></div>
+            <div class="evaluation-results" id="evaluation-results"></div>
+          </section>
         </section>
 
         <form class="composer" id="ask-form">

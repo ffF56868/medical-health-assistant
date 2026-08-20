@@ -20,6 +20,7 @@ from app.routers import (
     conversations,
     documents,
     drugs,
+    evaluation,
     feedback,
     knowledge,
 )
@@ -77,3 +78,4 @@ app.include_router(knowledge.router)
 app.include_router(conversations.router)
 app.include_router(documents.router)
 app.include_router(feedback.router)
+app.include_router(evaluation.router)

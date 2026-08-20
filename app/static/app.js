@@ -36,6 +36,10 @@ const refreshReviewQueueButton = document.querySelector("#refresh-review-queue")
 const versionStatus = document.querySelector("#version-status");
 const versionResults = document.querySelector("#version-results");
 const refreshKnowledgeVersionsButton = document.querySelector("#refresh-knowledge-versions");
+const runRagEvaluationButton = document.querySelector("#run-rag-evaluation");
+const evaluationStatus = document.querySelector("#evaluation-status");
+const evaluationMetrics = document.querySelector("#evaluation-metrics");
+const evaluationResults = document.querySelector("#evaluation-results");
 
 const SOURCE_TIER_OPTIONS = [
   ["authority", "权威机构"],
@@ -520,6 +524,67 @@ async function loadFeedbackDashboard() {
   }
 }
 
+function renderRagEvaluation(data) {
+  evaluationMetrics.innerHTML = "";
+  const metrics = [
+    ["通过", `${data.passed_count} / ${data.total_count}`],
+    ["命中率", `${Math.round(data.pass_rate * 100)}%`],
+  ];
+  for (const [label, value] of metrics) {
+    const metric = document.createElement("div");
+    metric.className = "evaluation-metric";
+    metric.textContent = `${label}：${value}`;
+    evaluationMetrics.append(metric);
+  }
+
+  evaluationResults.innerHTML = "";
+  for (const result of data.results) {
+    const item = document.createElement("article");
+    item.className = `evaluation-result ${result.passed ? "passed" : "failed"}`;
+    const title = document.createElement("h4");
+    title.textContent = result.question;
+    const detail = document.createElement("p");
+    const expectedType = getKnowledgeTypeLabel(result.expected_type);
+    if (result.passed) {
+      detail.textContent = `通过：目标${expectedType}“${result.expected_name}”命中第 ${result.expected_rank} 条。`;
+    } else {
+      const topResult = result.top_name
+        ? `首位结果是${getKnowledgeTypeLabel(result.top_type)}“${result.top_name}”`
+        : "没有检索到结果";
+      detail.textContent = `未通过：目标${expectedType}“${result.expected_name}”未进入前 3 条；${topResult}。`;
+    }
+    item.append(title, detail);
+    evaluationResults.append(item);
+  }
+}
+
+async function runRagEvaluation() {
+  const confirmed = window.confirm(
+    "将运行 4 个固定检索问题，只调用 Embedding，不生成模型回答，可能消耗少量额度。确定继续吗？",
+  );
+  if (!confirmed) return;
+
+  runRagEvaluationButton.disabled = true;
+  runRagEvaluationButton.textContent = "正在评测...";
+  evaluationStatus.className = "evaluation-status";
+  evaluationStatus.textContent = "正在检查前 3 条检索结果...";
+  evaluationMetrics.innerHTML = "";
+  evaluationResults.innerHTML = "";
+  try {
+    const response = await fetch("/evaluation/run", { method: "POST" });
+    const data = await response.json();
+    if (!response.ok) throw new Error(getErrorMessage(data, "评测失败。"));
+    renderRagEvaluation(data);
+    evaluationStatus.textContent = "评测完成。通过表示目标资料进入检索结果前 3 条。";
+  } catch (error) {
+    evaluationStatus.className = "evaluation-status error";
+    evaluationStatus.textContent = `评测失败：${error.message}`;
+  } finally {
+    runRagEvaluationButton.disabled = false;
+    runRagEvaluationButton.textContent = "运行评测";
+  }
+}
+
 function clearSearchResults() {
   searchResults.innerHTML = "";
 }
@@ -986,6 +1051,7 @@ refreshHistoryButton.addEventListener("click", loadConversationList);
 rebuildKnowledgeButton.addEventListener("click", rebuildKnowledge);
 refreshReviewQueueButton.addEventListener("click", loadReviewQueue);
 refreshKnowledgeVersionsButton.addEventListener("click", loadKnowledgeVersions);
+runRagEvaluationButton.addEventListener("click", runRagEvaluation);
 managerToggleButton.addEventListener("click", () => {
   setManagerVisible(knowledgeManager.classList.contains("is-hidden"));
 });

@@ -254,6 +254,34 @@ h2 { font-size: 20px; margin: 0; }
 
 .recent-feedback-item .feedback-reason { color: #97362d; }
 
+.evaluation-section { margin-top: 16px; }
+
+.evaluation-heading { align-items: center; display: flex; gap: 16px; justify-content: space-between; }
+
+.evaluation-heading .eyebrow { margin: 0 0 3px; }
+
+.evaluation-heading h3 { font-size: 16px; margin: 0; }
+
+.evaluation-status { color: #526166; font-size: 13px; min-height: 20px; margin: 14px 0 0; }
+
+.evaluation-status.error { color: #9c3024; }
+
+.evaluation-metrics { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+
+.evaluation-metric { background: #eef4f2; border: 1px solid #c9dcda; border-radius: 4px; color: #315b5d; font-size: 13px; padding: 7px 9px; }
+
+.evaluation-results { display: grid; gap: 8px; margin-top: 12px; }
+
+.evaluation-result { border-left: 3px solid #86aaa6; padding: 7px 0 7px 10px; }
+
+.evaluation-result.failed { border-left-color: #d49a27; }
+
+.evaluation-result h4 { font-size: 14px; margin: 0; }
+
+.evaluation-result p { color: #526166; font-size: 13px; line-height: 1.55; margin: 4px 0 0; }
+
+.evaluation-result.failed p { color: #8b4b10; }
+
 .welcome-message, .message { border-radius: 6px; line-height: 1.65; max-width: 720px; padding: 16px 18px; }
 
 .welcome-message { background: #ffffff; border: 1px solid #dce4e5; }

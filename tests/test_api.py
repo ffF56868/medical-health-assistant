@@ -6,6 +6,7 @@ from sqlmodel import Session, create_engine
 from app.database import create_db_and_tables
 from app.main import health_check
 from app.routers import ask as ask_router
+from app.routers import evaluation as evaluation_router
 from app.routers import knowledge as knowledge_router
 
 
@@ -35,6 +36,31 @@ class FakeChatModel:
         midpoint = max(1, len(self.answer) // 2)
         yield SimpleNamespace(content=self.answer[:midpoint])
         yield SimpleNamespace(content=self.answer[midpoint:])
+
+
+class FakeEvaluationVectorStore:
+    def __init__(self):
+        self.queries = []
+
+    def similarity_search_with_relevance_scores(self, query, k):
+        self.queries.append((query, k))
+        case = next(
+            item
+            for item in evaluation_router.EVALUATION_CASES
+            if item["question"] == query
+        )
+        return [
+            (
+                Document(
+                    page_content="评测用资料",
+                    metadata={
+                        "name": case["expected_name"],
+                        "type": case["expected_type"],
+                    },
+                ),
+                0.9,
+            )
+        ]
 
 
 def mock_current_knowledge_base(monkeypatch):
@@ -188,6 +214,30 @@ def test_knowledge_versions_can_restore_a_previous_snapshot(client, monkeypatch)
         if version["id"] == first_version_id
     )
     assert restored_version["is_current"] is True
+
+
+def test_rag_evaluation_reports_hits_in_the_top_three(client, monkeypatch):
+    vector_store = FakeEvaluationVectorStore()
+    monkeypatch.setattr(
+        evaluation_router,
+        "get_knowledge_status",
+        lambda session: {"is_current": True},
+    )
+    monkeypatch.setattr(
+        evaluation_router,
+        "get_vector_store",
+        lambda: vector_store,
+    )
+
+    response = client.post("/evaluation/run")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["total_count"] == len(evaluation_router.EVALUATION_CASES)
+    assert data["passed_count"] == data["total_count"]
+    assert data["pass_rate"] == 1
+    assert all(item["expected_rank"] == 1 for item in data["results"])
+    assert all(k == 3 for _, k in vector_store.queries)
 
 
 def test_condition_can_be_updated_and_deleted(client):

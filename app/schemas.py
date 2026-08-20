@@ -214,6 +214,25 @@ class KnowledgeReviewResponse(SQLModel):
     results: list[KnowledgeReviewItem] = Field(default_factory=list)
 
 
+class RAGEvaluationCaseResult(SQLModel):
+    case_id: str
+    question: str
+    expected_name: str
+    expected_type: str
+    passed: bool
+    expected_rank: int | None = None
+    top_name: str | None = None
+    top_type: str | None = None
+    top_score: float | None = None
+
+
+class RAGEvaluationResponse(SQLModel):
+    total_count: int
+    passed_count: int
+    pass_rate: float
+    results: list[RAGEvaluationCaseResult] = Field(default_factory=list)
+
+
 class KnowledgeRebuildResponse(SQLModel):
     message: str
     document_count: int
