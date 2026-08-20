@@ -1,3 +1,5 @@
+from datetime import UTC, datetime
+
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlmodel import Session, select
 
@@ -22,6 +24,7 @@ def create_condition(
         raise HTTPException(status_code=409, detail="病症已经存在")
 
     condition = Condition.model_validate(condition_data)
+    condition.updated_at = datetime.now(UTC)
     session.add(condition)
     session.commit()
     session.refresh(condition)
@@ -78,6 +81,9 @@ def update_condition(
     condition.name = condition_data.name
     condition.symptoms = condition_data.symptoms
     condition.treatment = condition_data.treatment
+    condition.source = condition_data.source
+    condition.source_tier = condition_data.source_tier
+    condition.updated_at = datetime.now(UTC)
     session.add(condition)
     session.commit()
     session.refresh(condition)

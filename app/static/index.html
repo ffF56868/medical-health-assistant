@@ -76,6 +76,8 @@
               <label>病症名称<input name="name" maxlength="100" required /></label>
               <label>常见症状<textarea name="symptoms" rows="4" maxlength="5000" required></textarea></label>
               <label>通用处理建议<textarea name="treatment" rows="4" maxlength="5000" required></textarea></label>
+              <label>资料来源<input name="source" maxlength="200" value="未标注来源" required /></label>
+              <label>可信度等级<select name="source_tier" required><option value="authority">权威机构</option><option value="professional">专业机构</option><option value="general">一般资料</option><option value="unverified" selected>待核实</option></select></label>
               <button type="submit">保存病症</button>
             </form>
 
@@ -84,13 +86,16 @@
               <label>药物名称<input name="name" maxlength="100" required /></label>
               <label>药物作用<textarea name="effects" rows="4" maxlength="5000" required></textarea></label>
               <label>使用说明<textarea name="instructions" rows="4" maxlength="5000" required></textarea></label>
+              <label>资料来源<input name="source" maxlength="200" value="未标注来源" required /></label>
+              <label>可信度等级<select name="source_tier" required><option value="authority">权威机构</option><option value="professional">专业机构</option><option value="general">一般资料</option><option value="unverified" selected>待核实</option></select></label>
               <button type="submit">保存药物</button>
             </form>
 
             <form class="entry-form" id="document-form">
               <div class="form-heading"><span class="type-chip document">资料</span><h3>添加手写资料</h3></div>
               <label>资料标题<input name="title" maxlength="200" required /></label>
-              <label>资料来源<input name="source" maxlength="200" value="manual" required /></label>
+              <label>资料来源<input name="source" maxlength="200" value="未标注来源" required /></label>
+              <label>可信度等级<select name="source_tier" required><option value="authority">权威机构</option><option value="professional">专业机构</option><option value="general">一般资料</option><option value="unverified" selected>待核实</option></select></label>
               <label>资料内容<textarea name="content" rows="7" maxlength="20000" required></textarea></label>
               <button type="submit">保存资料</button>
             </form>
@@ -151,6 +156,7 @@
           <span class="reference-score"></span>
         </div>
         <p class="reference-source"></p>
+        <p class="reference-confidence"></p>
         <p class="reference-excerpt"></p>
       </article>
     </template>

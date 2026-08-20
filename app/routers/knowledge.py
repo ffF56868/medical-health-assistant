@@ -9,6 +9,7 @@ from app.schemas import (
     KnowledgeSearchResponse,
     KnowledgeStatusResponse,
 )
+from app.source_metadata import needs_source_review
 from app.vector_store import get_knowledge_status, rebuild_vector_store
 
 
@@ -77,6 +78,13 @@ def search_knowledge(
                     type="condition",
                     record_id=condition.id,
                     title=condition.name,
+                    source=condition.source,
+                    source_tier=condition.source_tier,
+                    updated_at=condition.updated_at,
+                    needs_review=needs_source_review(
+                        condition.source_tier,
+                        condition.updated_at,
+                    ),
                     matched_fields=matched_fields,
                     excerpt=build_excerpt(query, "\n".join(fields.values())),
                 )
@@ -95,6 +103,13 @@ def search_knowledge(
                     type="drug",
                     record_id=drug.id,
                     title=drug.name,
+                    source=drug.source,
+                    source_tier=drug.source_tier,
+                    updated_at=drug.updated_at,
+                    needs_review=needs_source_review(
+                        drug.source_tier,
+                        drug.updated_at,
+                    ),
                     matched_fields=matched_fields,
                     excerpt=build_excerpt(query, "\n".join(fields.values())),
                 )
@@ -116,6 +131,12 @@ def search_knowledge(
                     record_id=document.id,
                     title=document.title,
                     source=document.source,
+                    source_tier=document.source_tier,
+                    updated_at=document.updated_at,
+                    needs_review=needs_source_review(
+                        document.source_tier,
+                        document.updated_at,
+                    ),
                     matched_fields=matched_fields,
                     excerpt=build_excerpt(query, "\n".join(fields.values())),
                 )

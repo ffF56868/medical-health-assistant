@@ -90,9 +90,9 @@ h2 { font-size: 20px; margin: 0; }
 
 .knowledge-search { display: flex; gap: 10px; margin-top: 22px; }
 
-.knowledge-search input, .entry-form input, .entry-form textarea { background: #ffffff; border: 1px solid #a8b9ba; border-radius: 5px; color: #17212b; padding: 10px 11px; width: 100%; }
+.knowledge-search input, .entry-form input, .entry-form textarea, .entry-form select { background: #ffffff; border: 1px solid #a8b9ba; border-radius: 5px; color: #17212b; padding: 10px 11px; width: 100%; }
 
-.knowledge-search input:focus, .entry-form input:focus, .entry-form textarea:focus { border-color: #21676a; outline: 2px solid #d9ef61; }
+.knowledge-search input:focus, .entry-form input:focus, .entry-form textarea:focus, .entry-form select:focus { border-color: #21676a; outline: 2px solid #d9ef61; }
 
 .knowledge-search button, .entry-form button { background: #21676a; border: 0; border-radius: 5px; color: #ffffff; cursor: pointer; min-height: 38px; padding: 0 16px; }
 
@@ -166,7 +166,7 @@ h2 { font-size: 20px; margin: 0; }
 
 .edit-fields label { color: #405258; display: grid; font-size: 13px; gap: 6px; }
 
-.edit-fields input, .edit-fields textarea { border: 1px solid #a8b9ba; border-radius: 5px; padding: 10px 11px; width: 100%; }
+.edit-fields input, .edit-fields textarea, .edit-fields select { border: 1px solid #a8b9ba; border-radius: 5px; padding: 10px 11px; width: 100%; }
 
 .edit-fields textarea { resize: vertical; }
 
@@ -232,6 +232,12 @@ h2 { font-size: 20px; margin: 0; }
 
 .reference-source, .reference-excerpt { color: #526166; font-size: 13px; margin: 4px 0 0; }
 
+.reference-confidence { color: #3b7475; font-size: 12px; margin: 4px 0 0; }
+
+.reference-confidence.needs-review { color: #97362d; font-weight: 700; }
+
+.edit-metadata { color: #607176; font-size: 12px; margin: 0; }
+
 .feedback-controls { align-items: center; border-top: 1px solid #e2e9e9; color: #526166; display: flex; flex-wrap: wrap; font-size: 13px; gap: 8px; margin-top: 14px; padding-top: 12px; }
 
 .feedback-controls button { background: #eef4f2; border: 1px solid #b9cecf; border-radius: 5px; color: #254b4d; cursor: pointer; font-size: 13px; min-height: 30px; padding: 0 10px; }
@@ -241,6 +247,10 @@ h2 { font-size: 20px; margin: 0; }
 .feedback-controls button:disabled { cursor: default; opacity: 0.65; }
 
 .feedback-status { color: #3b7475; }
+
+.answer-trace { align-items: center; border-top: 1px solid #e2e9e9; color: #607176; display: flex; flex-wrap: wrap; font-size: 12px; gap: 7px 12px; margin-top: 14px; padding-top: 11px; }
+
+.answer-trace span:first-child { color: #3b7475; font-weight: 700; }
 
 .composer { background: #ffffff; border-top: 1px solid #dce4e5; padding: 16px max(28px, calc((100vw - 860px) / 2)); }
 

@@ -1,5 +1,7 @@
 import os
 import json
+from datetime import datetime
+from time import perf_counter
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
@@ -10,6 +12,7 @@ from sqlmodel import Session, select
 from app.database import get_session
 from app.models import ChatMessage
 from app.schemas import AskRequest, AskResponse
+from app.source_metadata import needs_source_review
 from app.vector_store import get_knowledge_status, get_vector_store
 
 
@@ -89,12 +92,57 @@ def get_stream_text(chunk: object) -> str:
     return str(content)
 
 
+def parse_metadata_datetime(value: object) -> datetime | None:
+    if not isinstance(value, str) or not value.strip():
+        return None
+    try:
+        return datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+
+
+def build_references(relevant_matches: list[tuple[object, float]]) -> list[dict]:
+    references: list[dict] = []
+    for document, score in relevant_matches:
+        metadata = document.metadata
+        source_tier = str(metadata.get("source_tier", "unverified"))
+        updated_at = parse_metadata_datetime(metadata.get("updated_at"))
+        references.append(
+            {
+                "name": metadata.get("name", "未命名资料"),
+                "type": metadata.get("type", "unknown"),
+                "source": metadata.get("source", "未标注来源"),
+                "source_tier": source_tier,
+                "updated_at": updated_at,
+                "needs_review": bool(
+                    metadata.get(
+                        "needs_review",
+                        needs_source_review(source_tier, updated_at),
+                    )
+                ),
+                "excerpt": document.page_content.replace("\n", " ")[:180],
+                "relevance_score": round(score, 3),
+            }
+        )
+    return references
+
+
+def build_source_limitations(references: list[dict]) -> str:
+    if any(reference["needs_review"] for reference in references):
+        return (
+            "部分参考资料的来源待核实、未记录更新时间或已超过一年未更新。"
+            "回答中必须明确提示这项限制，不能把这些资料表述为确定的医疗结论。"
+        )
+    return "参考资料已标注来源和更新时间，但仍只能作为健康信息参考。"
+
+
 @router.post("", response_model=AskResponse)
 def ask_question(
     request: AskRequest,
     session: Session = Depends(get_session),
 ):
     """根据语义相似度，从 Chroma 向量库检索医疗健康资料。"""
+    started_at = perf_counter()
     history = session.exec(
         select(ChatMessage)
         .where(ChatMessage.conversation_id == request.conversation_id)
@@ -134,6 +182,9 @@ def ask_question(
                     "name": "需要及时就医的警示信号",
                     "type": "safety_guard",
                     "source": "系统安全规则",
+                    "source_tier": "professional",
+                    "updated_at": None,
+                    "needs_review": False,
                     "excerpt": (
                         "呼吸困难、持续或加重的胸痛、意识改变、抽搐、"
                         "单侧肢体无力、言语含糊或严重过敏表现时，"
@@ -142,6 +193,9 @@ def ask_question(
                     "relevance_score": 1.0,
                 }
             ],
+            processing_path="safety-keyword-guard",
+            retrieved_count=0,
+            latency_ms=round((perf_counter() - started_at) * 1000),
         )
 
     knowledge_status = get_knowledge_status(session)
@@ -201,22 +255,16 @@ def ask_question(
             conversation_id=request.conversation_id,
             assistant_message_id=assistant_message.id,
             references=[],
+            processing_path="vector-search-no-match",
+            retrieved_count=0,
+            latency_ms=round((perf_counter() - started_at) * 1000),
         )
 
     context = "\n\n".join(
         document.page_content
         for document in relevant_documents
     )
-    references = [
-        {
-            "name": document.metadata.get("name", "未命名资料"),
-            "type": document.metadata.get("type", "unknown"),
-            "source": document.metadata.get("source"),
-            "excerpt": document.page_content.replace("\n", " ")[:180],
-            "relevance_score": round(score, 3),
-        }
-        for document, score in relevant_matches
-    ]
+    references = build_references(relevant_matches)
 
     prompt = ChatPromptTemplate.from_messages(
         [
@@ -233,6 +281,7 @@ def ask_question(
                 "第一部分不得把用户症状与任何病症建立联系。"
                 "不能提供药物剂量或治疗方案。"
                 "如果资料不足，要明确说资料不足，并建议咨询医生。"
+                "资料可靠性提示：{source_limitations}"
                 "回答最后必须提醒：内容仅供健康信息参考，不代替医生诊断或处方。",
             ),
             (
@@ -249,6 +298,7 @@ def ask_question(
                 context=context,
                 history=history_text,
                 question=request.question,
+                source_limitations=build_source_limitations(references),
             )
         )
         answer = str(response.content)
@@ -275,6 +325,9 @@ def ask_question(
         conversation_id=request.conversation_id,
         assistant_message_id=assistant_message.id,
         references=references,
+        processing_path="rag-vector-retrieval",
+        retrieved_count=len(relevant_documents),
+        latency_ms=round((perf_counter() - started_at) * 1000),
     )
 
 
@@ -284,6 +337,7 @@ def stream_answer(
     session: Session = Depends(get_session),
 ) -> StreamingResponse:
     """Use SSE to return answer chunks while preserving the normal RAG rules."""
+    started_at = perf_counter()
     history = session.exec(
         select(ChatMessage)
         .where(ChatMessage.conversation_id == request.conversation_id)
@@ -317,11 +371,17 @@ def stream_answer(
                 "metadata",
                 {
                     "source": "safety-keyword-guard",
+                    "processing_path": "safety-keyword-guard",
+                    "retrieved_count": 0,
+                    "latency_ms": round((perf_counter() - started_at) * 1000),
                     "references": [
                         {
                             "name": "需要及时就医的警示信号",
                             "type": "safety_guard",
                             "source": "系统安全规则",
+                            "source_tier": "professional",
+                            "updated_at": None,
+                            "needs_review": False,
                             "excerpt": (
                                 "呼吸困难、持续或加重的胸痛、意识改变、抽搐、"
                                 "单侧肢体无力、言语含糊或严重过敏表现时，"
@@ -335,7 +395,12 @@ def stream_answer(
             yield format_sse_event("token", {"text": urgent_answer})
             yield format_sse_event(
                 "done",
-                {"assistant_message_id": assistant_message.id},
+                {
+                    "assistant_message_id": assistant_message.id,
+                    "processing_path": "safety-keyword-guard",
+                    "retrieved_count": 0,
+                    "latency_ms": round((perf_counter() - started_at) * 1000),
+                },
             )
 
         return StreamingResponse(
@@ -397,12 +462,23 @@ def stream_answer(
             session.refresh(assistant_message)
             yield format_sse_event(
                 "metadata",
-                {"source": "chroma-vector-search:no-match", "references": []},
+                {
+                    "source": "chroma-vector-search:no-match",
+                    "processing_path": "vector-search-no-match",
+                    "retrieved_count": 0,
+                    "latency_ms": round((perf_counter() - started_at) * 1000),
+                    "references": [],
+                },
             )
             yield format_sse_event("token", {"text": no_match_answer})
             yield format_sse_event(
                 "done",
-                {"assistant_message_id": assistant_message.id},
+                {
+                    "assistant_message_id": assistant_message.id,
+                    "processing_path": "vector-search-no-match",
+                    "retrieved_count": 0,
+                    "latency_ms": round((perf_counter() - started_at) * 1000),
+                },
             )
 
         return StreamingResponse(
@@ -412,16 +488,7 @@ def stream_answer(
         )
 
     context = "\n\n".join(document.page_content for document in relevant_documents)
-    references = [
-        {
-            "name": document.metadata.get("name", "未命名资料"),
-            "type": document.metadata.get("type", "unknown"),
-            "source": document.metadata.get("source"),
-            "excerpt": document.page_content.replace("\n", " ")[:180],
-            "relevance_score": round(score, 3),
-        }
-        for document, score in relevant_matches
-    ]
+    references = build_references(relevant_matches)
     prompt = ChatPromptTemplate.from_messages(
         [
             (
@@ -437,6 +504,7 @@ def stream_answer(
                 "第一部分不得把用户症状与任何病症建立联系。"
                 "不能提供药物剂量或治疗方案。"
                 "如果资料不足，要明确说资料不足，并建议咨询医生。"
+                "资料可靠性提示：{source_limitations}"
                 "回答最后必须提醒：内容仅供健康信息参考，不代替医生诊断或处方。",
             ),
             (
@@ -450,6 +518,7 @@ def stream_answer(
         context=context,
         history=history_text,
         question=request.question,
+        source_limitations=build_source_limitations(references),
     )
 
     def answer_event_stream():
@@ -457,6 +526,9 @@ def stream_answer(
             "metadata",
             {
                 "source": "chroma-retrieval-openai-generation",
+                "processing_path": "rag-vector-retrieval",
+                "retrieved_count": len(relevant_documents),
+                "latency_ms": round((perf_counter() - started_at) * 1000),
                 "references": references,
             },
         )
@@ -490,7 +562,12 @@ def stream_answer(
         session.refresh(assistant_message)
         yield format_sse_event(
             "done",
-            {"assistant_message_id": assistant_message.id},
+            {
+                "assistant_message_id": assistant_message.id,
+                "processing_path": "rag-vector-retrieval",
+                "retrieved_count": len(relevant_documents),
+                "latency_ms": round((perf_counter() - started_at) * 1000),
+            },
         )
 
     return StreamingResponse(

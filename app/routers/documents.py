@@ -1,3 +1,4 @@
+from datetime import UTC, datetime
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
@@ -29,6 +30,7 @@ def create_document(
         raise HTTPException(status_code=409, detail="知识文档标题已经存在")
 
     document = KnowledgeDocument.model_validate(document_data)
+    document.updated_at = datetime.now(UTC)
     session.add(document)
     session.commit()
     session.refresh(document)
@@ -79,6 +81,8 @@ async def upload_document(
         title=title,
         content=content,
         source=f"上传文件：{filename}",
+        source_tier="unverified",
+        updated_at=datetime.now(UTC),
     )
     session.add(document)
     session.commit()
@@ -138,6 +142,8 @@ def update_document(
     document.title = document_data.title
     document.content = document_data.content
     document.source = document_data.source
+    document.source_tier = document_data.source_tier
+    document.updated_at = datetime.now(UTC)
     session.add(document)
     session.commit()
     session.refresh(document)

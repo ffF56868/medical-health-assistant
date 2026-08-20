@@ -1,8 +1,9 @@
 from types import SimpleNamespace
 
 from langchain_core.documents import Document
-from sqlmodel import Session
+from sqlmodel import Session, create_engine
 
+from app.database import create_db_and_tables
 from app.main import health_check
 from app.routers import ask as ask_router
 
@@ -50,6 +51,8 @@ def test_condition_can_be_created_and_listed(client):
             "name": "测试病症",
             "symptoms": "测试症状",
             "treatment": "测试处理建议",
+            "source": "测试卫生机构",
+            "source_tier": "professional",
         },
     )
     assert create_response.status_code == 201
@@ -57,6 +60,38 @@ def test_condition_can_be_created_and_listed(client):
     list_response = client.get("/conditions", params={"keyword": "测试"})
     assert list_response.status_code == 200
     assert list_response.json()[0]["name"] == "测试病症"
+    assert list_response.json()[0]["source_tier"] == "professional"
+    assert list_response.json()[0]["updated_at"] is not None
+
+
+def test_existing_sqlite_data_receives_metadata_columns_without_data_loss():
+    old_database = create_engine("sqlite://")
+    with old_database.begin() as connection:
+        connection.exec_driver_sql(
+            'CREATE TABLE "condition" ('
+            'id INTEGER PRIMARY KEY, name VARCHAR(100), '
+            'symptoms VARCHAR(5000), treatment VARCHAR(5000))'
+        )
+        connection.exec_driver_sql(
+            "INSERT INTO \"condition\" (id, name, symptoms, treatment) "
+            "VALUES (1, '旧资料', '旧症状', '旧建议')"
+        )
+
+    create_db_and_tables(old_database)
+
+    with old_database.connect() as connection:
+        columns = {
+            row[1]
+            for row in connection.exec_driver_sql('PRAGMA table_info("condition")')
+        }
+        migrated_row = connection.exec_driver_sql(
+            'SELECT source, source_tier, updated_at FROM "condition" WHERE id = 1'
+        ).one()
+
+    assert {"source", "source_tier", "updated_at"}.issubset(columns)
+    assert migrated_row.source == "未标注来源"
+    assert migrated_row.source_tier == "unverified"
+    assert migrated_row.updated_at is None
 
 
 def test_blank_knowledge_search_is_rejected(client):
@@ -248,6 +283,11 @@ def test_rag_keeps_the_best_chunk_and_returns_structured_references(
     assert data["references"][0]["relevance_score"] == 0.9
     assert "高分切块" in data["references"][0]["excerpt"]
     assert data["references"][0]["source"] == "测试文档"
+    assert data["references"][0]["source_tier"] == "unverified"
+    assert data["references"][0]["needs_review"] is True
+    assert data["processing_path"] == "rag-vector-retrieval"
+    assert data["retrieved_count"] == 2
+    assert data["latency_ms"] >= 0
 
 
 def test_rag_returns_no_match_without_calling_the_chat_model(client, monkeypatch):
@@ -331,6 +371,8 @@ def test_rag_streams_tokens_and_saves_the_completed_answer(client, monkeypatch):
     assert response.text.count("event: token") == 2
     assert '"text": "这是分段返回"' in response.text
     assert '"text": "的测试回答。"' in response.text
+    assert '"processing_path": "rag-vector-retrieval"' in response.text
+    assert '"retrieved_count": 1' in response.text
     assert "event: done" in response.text
     assert chat_model.call_count == 1
 

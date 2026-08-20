@@ -1,3 +1,5 @@
+from datetime import UTC, datetime
+
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlmodel import Session, select
 
@@ -22,6 +24,7 @@ def create_drug(
         raise HTTPException(status_code=409, detail="药物已经存在")
 
     drug = Drug.model_validate(drug_data)
+    drug.updated_at = datetime.now(UTC)
     session.add(drug)
     session.commit()
     session.refresh(drug)
@@ -78,6 +81,9 @@ def update_drug(
     drug.name = drug_data.name
     drug.effects = drug_data.effects
     drug.instructions = drug_data.instructions
+    drug.source = drug_data.source
+    drug.source_tier = drug_data.source_tier
+    drug.updated_at = datetime.now(UTC)
     session.add(drug)
     session.commit()
     session.refresh(drug)

@@ -3,6 +3,8 @@ from datetime import datetime
 from pydantic import field_validator
 from sqlmodel import Field, SQLModel
 
+from app.source_metadata import SOURCE_TIERS
+
 
 def strip_required_text(value: str) -> str:
     if not isinstance(value, str) or not value.strip():
@@ -10,7 +12,24 @@ def strip_required_text(value: str) -> str:
     return value.strip()
 
 
-class ConditionCreate(SQLModel):
+def validate_source_tier(value: str) -> str:
+    normalized_value = strip_required_text(value)
+    if normalized_value not in SOURCE_TIERS:
+        raise ValueError("可信度等级必须是 authority、professional、general 或 unverified")
+    return normalized_value
+
+
+class SourceMetadataCreate(SQLModel):
+    source: str = Field(default="未标注来源", min_length=1, max_length=200)
+    source_tier: str = Field(default="unverified", min_length=1, max_length=20)
+
+    _strip_source = field_validator("source", mode="before")(strip_required_text)
+    _validate_source_tier = field_validator("source_tier", mode="before")(
+        validate_source_tier
+    )
+
+
+class ConditionCreate(SourceMetadataCreate):
     name: str = Field(min_length=1, max_length=100)
     symptoms: str = Field(min_length=1, max_length=5000)
     treatment: str = Field(min_length=1, max_length=5000)
@@ -26,9 +45,10 @@ class ConditionCreate(SQLModel):
 
 class ConditionRead(ConditionCreate):
     id: int
+    updated_at: datetime | None = None
 
 
-class DrugCreate(SQLModel):
+class DrugCreate(SourceMetadataCreate):
     name: str = Field(min_length=1, max_length=100)
     effects: str = Field(min_length=1, max_length=5000)
     instructions: str = Field(min_length=1, max_length=5000)
@@ -44,20 +64,20 @@ class DrugCreate(SQLModel):
 
 class DrugRead(DrugCreate):
     id: int
+    updated_at: datetime | None = None
 
 
-class KnowledgeDocumentCreate(SQLModel):
+class KnowledgeDocumentCreate(SourceMetadataCreate):
     title: str = Field(min_length=1, max_length=200)
     content: str = Field(min_length=1, max_length=20000)
-    source: str = Field(default="manual", min_length=1, max_length=200)
 
     _strip_title = field_validator("title", mode="before")(strip_required_text)
     _strip_content = field_validator("content", mode="before")(strip_required_text)
-    _strip_source = field_validator("source", mode="before")(strip_required_text)
 
 
 class KnowledgeDocumentRead(KnowledgeDocumentCreate):
     id: int
+    updated_at: datetime | None = None
 
 
 class AskRequest(SQLModel):
@@ -76,6 +96,9 @@ class ReferenceRead(SQLModel):
     name: str
     type: str
     source: str | None = None
+    source_tier: str = "unverified"
+    updated_at: datetime | None = None
+    needs_review: bool = True
     excerpt: str
     relevance_score: float
 
@@ -87,6 +110,9 @@ class AskResponse(SQLModel):
     conversation_id: str
     assistant_message_id: int
     references: list[ReferenceRead] = Field(default_factory=list)
+    processing_path: str
+    retrieved_count: int
+    latency_ms: int
 
 
 class ChatMessageRead(SQLModel):
@@ -160,6 +186,9 @@ class KnowledgeSearchItem(SQLModel):
     record_id: int
     title: str
     source: str | None = None
+    source_tier: str = "unverified"
+    updated_at: datetime | None = None
+    needs_review: bool = True
     matched_fields: list[str]
     excerpt: str
 

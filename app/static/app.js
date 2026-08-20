@@ -31,6 +31,13 @@ const commonReasons = document.querySelector("#common-reasons");
 const recommendedActions = document.querySelector("#recommended-actions");
 const recentFeedbackList = document.querySelector("#recent-feedback-list");
 
+const SOURCE_TIER_OPTIONS = [
+  ["authority", "权威机构"],
+  ["professional", "专业机构"],
+  ["general", "一般资料"],
+  ["unverified", "待核实"],
+];
+
 const entryConfiguration = {
   condition: {
     endpoint: "/conditions",
@@ -39,6 +46,8 @@ const entryConfiguration = {
       ["name", "病症名称", "input"],
       ["symptoms", "常见症状", "textarea"],
       ["treatment", "通用处理建议", "textarea"],
+      ["source", "资料来源", "input"],
+      ["source_tier", "可信度等级", "select"],
     ],
   },
   drug: {
@@ -48,6 +57,8 @@ const entryConfiguration = {
       ["name", "药物名称", "input"],
       ["effects", "药物作用", "textarea"],
       ["instructions", "使用说明", "textarea"],
+      ["source", "资料来源", "input"],
+      ["source_tier", "可信度等级", "select"],
     ],
   },
   document: {
@@ -56,6 +67,7 @@ const entryConfiguration = {
     fields: [
       ["title", "资料标题", "input"],
       ["source", "资料来源", "input"],
+      ["source_tier", "可信度等级", "select"],
       ["content", "资料内容", "textarea"],
     ],
   },
@@ -76,6 +88,23 @@ function saveActiveConversation() {
 
 function scrollToLatestMessage() {
   messageList.scrollTop = messageList.scrollHeight;
+}
+
+function getSourceTierLabel(sourceTier) {
+  return SOURCE_TIER_OPTIONS.find(([value]) => value === sourceTier)?.[1] || "待核实";
+}
+
+function formatUpdatedAt(updatedAt) {
+  if (!updatedAt) return "未记录";
+  const parsed = new Date(updatedAt);
+  if (Number.isNaN(parsed.getTime())) return "未记录";
+  return new Intl.DateTimeFormat("zh-CN", {
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(parsed);
 }
 
 function appendMessage(content, role, references = [], assistantMessageId = null) {
@@ -114,7 +143,13 @@ function appendReferences(message, references) {
     const item = referenceTemplate.content.cloneNode(true);
     item.querySelector(".reference-name").textContent = reference.name;
     item.querySelector(".reference-score").textContent = `相关度 ${Math.round(reference.relevance_score * 100)}%`;
-    item.querySelector(".reference-source").textContent = reference.source || reference.type;
+    item.querySelector(".reference-source").textContent = `来源：${reference.source || "未标注来源"}`;
+    const confidence = item.querySelector(".reference-confidence");
+    confidence.textContent = `可信度：${getSourceTierLabel(reference.source_tier)} | 最后更新：${formatUpdatedAt(reference.updated_at)}`;
+    if (reference.needs_review) {
+      confidence.classList.add("needs-review");
+      confidence.textContent += " | 资料需核验，不能作为医疗结论";
+    }
     item.querySelector(".reference-excerpt").textContent = reference.excerpt;
     referenceSection.append(item);
   }
@@ -138,6 +173,26 @@ function appendFeedback(message, role, assistantMessageId) {
     });
   });
   message.append(feedback);
+}
+
+function appendTrace(message, trace) {
+  const pathLabels = {
+    "rag-vector-retrieval": "RAG 检索 + 模型生成",
+    "vector-search-no-match": "未找到相关资料",
+    "safety-keyword-guard": "安全拦截",
+  };
+  const traceSection = document.createElement("div");
+  traceSection.className = "answer-trace";
+  const title = document.createElement("span");
+  title.textContent = "本次回答过程";
+  const path = document.createElement("span");
+  path.textContent = pathLabels[trace.processing_path] || "未知处理路径";
+  const retrieved = document.createElement("span");
+  retrieved.textContent = `命中 ${trace.retrieved_count || 0} 条资料`;
+  const latency = document.createElement("span");
+  latency.textContent = `耗时 ${trace.latency_ms || 0} ms`;
+  traceSection.append(title, path, retrieved, latency);
+  message.append(traceSection);
 }
 
 async function submitFeedback(container, assistantMessageId, helpful) {
@@ -467,7 +522,8 @@ function renderSearchResults(data) {
     type.textContent = ({ condition: "病症", drug: "药物", document: "资料" })[item.type] || item.type;
     header.append(title, type);
     const fields = document.createElement("p");
-    fields.textContent = `匹配字段：${item.matched_fields.join("、")}${item.source ? ` | 来源：${item.source}` : ""}`;
+    const reviewNote = item.needs_review ? " | 需核验" : "";
+    fields.textContent = `匹配字段：${item.matched_fields.join("、")} | 来源：${item.source || "未标注来源"} | 可信度：${getSourceTierLabel(item.source_tier)} | 更新：${formatUpdatedAt(item.updated_at)}${reviewNote}`;
     const excerpt = document.createElement("p");
     excerpt.textContent = item.excerpt;
     const actions = document.createElement("div");
@@ -521,7 +577,8 @@ async function createKnowledgeEntry(formElement, endpoint) {
     const data = await response.json();
     if (!response.ok) throw new Error(getErrorMessage(data, "保存失败。"));
     formElement.reset();
-    if (endpoint === "/documents") formElement.elements.source.value = "manual";
+    formElement.elements.source.value = "未标注来源";
+    formElement.elements.source_tier.value = "unverified";
     entryStatus.textContent = `已保存“${data.name || data.title}”。知识库已变为待重建状态。`;
     await loadKnowledgeStatus();
   } catch (error) {
@@ -586,11 +643,23 @@ async function openEditDialog(item) {
       const control = document.createElement(controlType);
       control.name = name;
       control.required = true;
+      if (controlType === "select") {
+        for (const [value, optionLabel] of SOURCE_TIER_OPTIONS) {
+          const option = document.createElement("option");
+          option.value = value;
+          option.textContent = optionLabel;
+          control.append(option);
+        }
+      }
       control.value = data[name];
       if (controlType === "textarea") control.rows = name === "content" ? 8 : 4;
       fieldLabel.append(control);
       editFields.append(fieldLabel);
     }
+    const metadata = document.createElement("p");
+    metadata.className = "edit-metadata";
+    metadata.textContent = `最后更新：${formatUpdatedAt(data.updated_at)}${data.updated_at ? "（保存后会刷新）" : "（保存后会补上）"}`;
+    editFields.append(metadata);
     editDialog.showModal();
   } catch (error) {
     entryStatus.className = "manager-status error";
@@ -693,6 +762,7 @@ async function requestStreamingAnswer(question) {
       scrollToLatestMessage();
     } else if (eventName === "done") {
       appendReferences(assistantMessage, metadata.references || []);
+      appendTrace(assistantMessage, { ...metadata, ...data });
       appendFeedback(assistantMessage, "assistant", data.assistant_message_id);
       completed = true;
       scrollToLatestMessage();
