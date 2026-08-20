@@ -62,6 +62,30 @@
             <p>新增资料后不会立刻被问答使用。顶部状态变为“待重建”后，点击“重建知识库”才会更新 RAG。</p>
           </div>
 
+          <section class="review-queue" aria-labelledby="review-queue-title">
+            <div class="review-queue-heading">
+              <div>
+                <p class="eyebrow">资料审核</p>
+                <h3 id="review-queue-title">待核验资料</h3>
+              </div>
+              <button class="secondary-button" id="refresh-review-queue" type="button">刷新列表</button>
+            </div>
+            <p class="review-status" id="review-status" aria-live="polite"></p>
+            <div class="review-results" id="review-results"></div>
+          </section>
+
+          <section class="knowledge-versions" aria-labelledby="knowledge-versions-title">
+            <div class="review-queue-heading">
+              <div>
+                <p class="eyebrow">本地版本</p>
+                <h3 id="knowledge-versions-title">知识库历史</h3>
+              </div>
+              <button class="secondary-button" id="refresh-knowledge-versions" type="button">刷新版本</button>
+            </div>
+            <p class="version-status" id="version-status" aria-live="polite"></p>
+            <div class="version-results" id="version-results"></div>
+          </section>
+
           <form class="knowledge-search" id="knowledge-search-form">
             <label class="sr-only" for="knowledge-query">搜索知识库</label>
             <input id="knowledge-query" maxlength="100" placeholder="搜索病症、药物或资料关键词" required />

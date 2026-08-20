@@ -45,7 +45,7 @@ def build_source_metadata(record: object) -> dict[str, str | bool]:
         "source": source,
         "source_tier": source_tier,
         "updated_at": updated_at.isoformat() if updated_at else "",
-        "needs_review": needs_source_review(source_tier, updated_at),
+        "needs_review": needs_source_review(source_tier, updated_at, source),
     }
 
 

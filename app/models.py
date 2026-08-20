@@ -59,3 +59,15 @@ class KnowledgeIndexState(SQLModel, table=True):
     content_hash: str = Field(max_length=64)
     document_count: int
     indexed_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+
+
+class KnowledgeSnapshot(SQLModel, table=True):
+    id: int | None = Field(default=None, primary_key=True)
+    content_hash: str = Field(index=True, max_length=64)
+    document_count: int
+    reason: str = Field(default="rebuild", max_length=50)
+    payload_json: str
+    created_at: datetime = Field(
+        default_factory=lambda: datetime.now(UTC),
+        index=True,
+    )

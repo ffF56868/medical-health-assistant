@@ -199,8 +199,46 @@ class KnowledgeSearchResponse(SQLModel):
     results: list[KnowledgeSearchItem] = Field(default_factory=list)
 
 
+class KnowledgeReviewItem(SQLModel):
+    type: str
+    record_id: int
+    title: str
+    source: str
+    source_tier: str
+    updated_at: datetime | None = None
+    review_reasons: list[str] = Field(default_factory=list)
+
+
+class KnowledgeReviewResponse(SQLModel):
+    total_count: int
+    results: list[KnowledgeReviewItem] = Field(default_factory=list)
+
+
 class KnowledgeRebuildResponse(SQLModel):
     message: str
+    document_count: int
+    chunk_count: int
+    snapshot_id: int
+    snapshot_created: bool
+
+
+class KnowledgeVersionRead(SQLModel):
+    id: int
+    document_count: int
+    reason: str
+    created_at: datetime
+    is_current: bool
+
+
+class KnowledgeVersionListResponse(SQLModel):
+    total_count: int
+    versions: list[KnowledgeVersionRead] = Field(default_factory=list)
+
+
+class KnowledgeRestoreResponse(SQLModel):
+    message: str
+    restored_version_id: int
+    backup_version_id: int
     document_count: int
     chunk_count: int
 

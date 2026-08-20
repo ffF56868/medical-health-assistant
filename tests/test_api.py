@@ -6,6 +6,7 @@ from sqlmodel import Session, create_engine
 from app.database import create_db_and_tables
 from app.main import health_check
 from app.routers import ask as ask_router
+from app.routers import knowledge as knowledge_router
 
 
 class FakeVectorStore:
@@ -98,6 +99,95 @@ def test_blank_knowledge_search_is_rejected(client):
     response = client.get("/knowledge/search", params={"q": " "})
     assert response.status_code == 422
     assert response.json()["detail"] == "搜索关键词不能为空"
+
+
+def test_review_queue_lists_only_knowledge_that_needs_human_review(client):
+    needs_review = client.post(
+        "/conditions",
+        json={
+            "name": "待核验病症",
+            "symptoms": "测试症状",
+            "treatment": "测试处理建议",
+        },
+    )
+    ready = client.post(
+        "/drugs",
+        json={
+            "name": "已标注药物",
+            "effects": "测试作用",
+            "instructions": "测试说明",
+            "source": "测试专业机构",
+            "source_tier": "professional",
+        },
+    )
+    assert needs_review.status_code == 201
+    assert ready.status_code == 201
+
+    response = client.get("/knowledge/review-queue")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["total_count"] == 1
+    assert data["results"][0]["title"] == "待核验病症"
+    assert "可信度等级为待核实" in data["results"][0]["review_reasons"]
+    assert "未标注具体资料来源" in data["results"][0]["review_reasons"]
+
+
+def test_knowledge_versions_can_restore_a_previous_snapshot(client, monkeypatch):
+    def fake_rebuild_vector_store(session):
+        session.commit()
+        return 1, 1
+
+    monkeypatch.setattr(
+        knowledge_router,
+        "rebuild_vector_store",
+        fake_rebuild_vector_store,
+    )
+    created = client.post(
+        "/conditions",
+        json={
+            "name": "版本测试病症",
+            "symptoms": "第一版症状",
+            "treatment": "第一版建议",
+        },
+    )
+    assert created.status_code == 201
+    condition_id = created.json()["id"]
+
+    first_rebuild = client.post("/knowledge/rebuild")
+    assert first_rebuild.status_code == 200
+    first_version_id = first_rebuild.json()["snapshot_id"]
+
+    updated = client.put(
+        f"/conditions/{condition_id}",
+        json={
+            "name": "版本测试病症",
+            "symptoms": "第二版症状",
+            "treatment": "第二版建议",
+        },
+    )
+    assert updated.status_code == 200
+    second_rebuild = client.post("/knowledge/rebuild")
+    assert second_rebuild.status_code == 200
+    assert second_rebuild.json()["snapshot_id"] != first_version_id
+
+    restored = client.post(f"/knowledge/versions/{first_version_id}/restore")
+    assert restored.status_code == 200
+    assert restored.json()["restored_version_id"] == first_version_id
+    assert restored.json()["backup_version_id"] == second_rebuild.json()["snapshot_id"]
+
+    condition = client.get(f"/conditions/{condition_id}")
+    assert condition.status_code == 200
+    assert condition.json()["symptoms"] == "第一版症状"
+
+    versions = client.get("/knowledge/versions")
+    assert versions.status_code == 200
+    restored_version = next(
+        version
+        for version in versions.json()["versions"]
+        if version["id"] == first_version_id
+    )
+    assert restored_version["is_current"] is True
 
 
 def test_condition_can_be_updated_and_deleted(client):

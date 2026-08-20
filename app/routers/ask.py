@@ -106,18 +106,19 @@ def build_references(relevant_matches: list[tuple[object, float]]) -> list[dict]
     for document, score in relevant_matches:
         metadata = document.metadata
         source_tier = str(metadata.get("source_tier", "unverified"))
+        source = str(metadata.get("source", "未标注来源"))
         updated_at = parse_metadata_datetime(metadata.get("updated_at"))
         references.append(
             {
                 "name": metadata.get("name", "未命名资料"),
                 "type": metadata.get("type", "unknown"),
-                "source": metadata.get("source", "未标注来源"),
+                "source": source,
                 "source_tier": source_tier,
                 "updated_at": updated_at,
                 "needs_review": bool(
                     metadata.get(
                         "needs_review",
-                        needs_source_review(source_tier, updated_at),
+                        needs_source_review(source_tier, updated_at, source),
                     )
                 ),
                 "excerpt": document.page_content.replace("\n", " ")[:180],

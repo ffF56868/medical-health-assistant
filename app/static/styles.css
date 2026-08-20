@@ -88,6 +88,54 @@ h2 { font-size: 20px; margin: 0; }
 
 .manager-heading p:last-child { color: #526166; font-size: 14px; line-height: 1.6; margin: 0; max-width: 470px; }
 
+.review-queue { border-bottom: 1px solid #dce4e5; padding: 22px 0; }
+
+.review-queue-heading { align-items: center; display: flex; justify-content: space-between; gap: 14px; }
+
+.review-queue-heading .eyebrow { margin: 0 0 3px; }
+
+.review-queue-heading h3 { font-size: 16px; margin: 0; }
+
+.review-status { color: #526166; font-size: 13px; min-height: 20px; margin: 10px 0; }
+
+.review-status.error { color: #9c3024; }
+
+.review-results { display: grid; gap: 8px; }
+
+.review-item { background: #ffffff; border: 1px solid #e2c78e; border-left: 3px solid #d49a27; border-radius: 6px; padding: 12px 13px; }
+
+.review-item h4 { font-size: 15px; margin: 0; }
+
+.review-item p { color: #526166; font-size: 13px; line-height: 1.6; margin: 7px 0 0; }
+
+.review-item .review-reasons { color: #8b4b10; font-weight: 700; }
+
+.review-item button { background: #ffffff; border: 1px solid #a8b9ba; border-radius: 4px; color: #315b5d; cursor: pointer; font-size: 12px; margin-top: 10px; min-height: 29px; padding: 0 9px; }
+
+.knowledge-versions { border-bottom: 1px solid #dce4e5; padding: 22px 0; }
+
+.version-status { color: #526166; font-size: 13px; min-height: 20px; margin: 10px 0; }
+
+.version-status.error { color: #9c3024; }
+
+.version-results { display: grid; gap: 8px; }
+
+.version-item { background: #ffffff; border: 1px solid #dce4e5; border-left: 3px solid #7c9f9e; border-radius: 6px; padding: 12px 13px; }
+
+.version-item.current { border-left-color: #21676a; }
+
+.version-item h4 { font-size: 15px; margin: 0; }
+
+.version-item p { color: #526166; font-size: 13px; line-height: 1.6; margin: 7px 0 0; }
+
+.version-state { background: #eef4f2; border: 1px solid #c9dcda; border-radius: 4px; color: #315b5d; font-size: 12px; padding: 3px 7px; }
+
+.version-current-note { color: #315b5d !important; }
+
+.version-item button { background: #ffffff; border: 1px solid #a8b9ba; border-radius: 4px; color: #315b5d; cursor: pointer; font-size: 12px; margin-top: 10px; min-height: 29px; padding: 0 9px; }
+
+.version-item button:disabled { cursor: wait; opacity: 0.65; }
+
 .knowledge-search { display: flex; gap: 10px; margin-top: 22px; }
 
 .knowledge-search input, .entry-form input, .entry-form textarea, .entry-form select { background: #ffffff; border: 1px solid #a8b9ba; border-radius: 5px; color: #17212b; padding: 10px 11px; width: 100%; }

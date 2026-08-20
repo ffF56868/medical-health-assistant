@@ -30,6 +30,12 @@ const feedbackMetrics = document.querySelector("#feedback-metrics");
 const commonReasons = document.querySelector("#common-reasons");
 const recommendedActions = document.querySelector("#recommended-actions");
 const recentFeedbackList = document.querySelector("#recent-feedback-list");
+const reviewStatus = document.querySelector("#review-status");
+const reviewResults = document.querySelector("#review-results");
+const refreshReviewQueueButton = document.querySelector("#refresh-review-queue");
+const versionStatus = document.querySelector("#version-status");
+const versionResults = document.querySelector("#version-results");
+const refreshKnowledgeVersionsButton = document.querySelector("#refresh-knowledge-versions");
 
 const SOURCE_TIER_OPTIONS = [
   ["authority", "权威机构"],
@@ -105,6 +111,17 @@ function formatUpdatedAt(updatedAt) {
     hour: "2-digit",
     minute: "2-digit",
   }).format(parsed);
+}
+
+function getKnowledgeTypeLabel(type) {
+  return ({ condition: "病症", drug: "药物", document: "资料" })[type] || type;
+}
+
+function getSnapshotReasonLabel(reason) {
+  return ({
+    rebuild: "重建时自动保存",
+    pre_restore: "恢复前自动备份",
+  })[reason] || "自动保存";
 }
 
 function appendMessage(content, role, references = [], assistantMessageId = null) {
@@ -371,6 +388,7 @@ async function rebuildKnowledge() {
       chunk_count: data.chunk_count,
     });
     rebuildKnowledgeButton.textContent = "重建完成";
+    await loadKnowledgeVersions();
   } catch (error) {
     knowledgeStatus.className = "knowledge-status error";
     knowledgeStatus.textContent = `重建失败：${error.message}`;
@@ -387,7 +405,11 @@ function setManagerVisible(visible) {
   form.classList.toggle("is-hidden", visible);
   managerToggleButton.textContent = visible ? "返回问答" : "管理资料";
   feedbackDashboardToggle.textContent = "质量面板";
-  if (visible) searchInput.focus();
+  if (visible) {
+    searchInput.focus();
+    loadReviewQueue();
+    loadKnowledgeVersions();
+  }
 }
 
 function setFeedbackDashboardVisible(visible) {
@@ -502,6 +524,148 @@ function clearSearchResults() {
   searchResults.innerHTML = "";
 }
 
+function renderReviewQueue(data) {
+  reviewResults.innerHTML = "";
+  if (data.results.length === 0) {
+    reviewStatus.textContent = "目前没有待核验资料。";
+    return;
+  }
+
+  reviewStatus.textContent = `共 ${data.total_count} 条资料需要核验或更新。`;
+  for (const item of data.results) {
+    const result = document.createElement("article");
+    result.className = "review-item";
+    const header = document.createElement("div");
+    header.className = "search-result-header";
+    const title = document.createElement("h4");
+    title.textContent = item.title;
+    const type = document.createElement("span");
+    type.className = `type-chip ${item.type}`;
+    type.textContent = getKnowledgeTypeLabel(item.type);
+    header.append(title, type);
+
+    const metadata = document.createElement("p");
+    metadata.textContent = `来源：${item.source || "未标注来源"} | 可信度：${getSourceTierLabel(item.source_tier)} | 更新：${formatUpdatedAt(item.updated_at)}`;
+    const reasons = document.createElement("p");
+    reasons.className = "review-reasons";
+    reasons.textContent = `需处理：${item.review_reasons.join("；")}`;
+    const editButton = document.createElement("button");
+    editButton.type = "button";
+    editButton.textContent = "去补充来源";
+    editButton.addEventListener("click", () => openEditDialog(item));
+    result.append(header, metadata, reasons, editButton);
+    reviewResults.append(result);
+  }
+}
+
+async function loadReviewQueue() {
+  reviewStatus.className = "review-status";
+  reviewStatus.textContent = "正在读取待核验资料...";
+  reviewResults.innerHTML = "";
+  refreshReviewQueueButton.disabled = true;
+  try {
+    const response = await fetch("/knowledge/review-queue");
+    const data = await response.json();
+    if (!response.ok) throw new Error(getErrorMessage(data, "读取待核验资料失败。"));
+    renderReviewQueue(data);
+  } catch (error) {
+    reviewStatus.className = "review-status error";
+    reviewStatus.textContent = `读取失败：${error.message}`;
+  } finally {
+    refreshReviewQueueButton.disabled = false;
+  }
+}
+
+function renderKnowledgeVersions(data) {
+  versionResults.innerHTML = "";
+  if (data.versions.length === 0) {
+    versionStatus.textContent = "还没有版本记录。下次重建知识库时会自动保存当前资料。";
+    return;
+  }
+
+  versionStatus.textContent = `已保存 ${data.total_count} 个本地版本。`;
+  for (const version of data.versions) {
+    const item = document.createElement("article");
+    item.className = "version-item";
+    if (version.is_current) item.classList.add("current");
+
+    const header = document.createElement("div");
+    header.className = "search-result-header";
+    const title = document.createElement("h4");
+    title.textContent = `版本 #${version.id}`;
+    const state = document.createElement("span");
+    state.className = "version-state";
+    state.textContent = version.is_current ? "当前资料" : "历史版本";
+    header.append(title, state);
+
+    const detail = document.createElement("p");
+    detail.textContent = `${getSnapshotReasonLabel(version.reason)} | ${version.document_count} 份资料 | 保存于 ${formatUpdatedAt(version.created_at)}`;
+    item.append(header, detail);
+
+    if (version.is_current) {
+      const currentNote = document.createElement("p");
+      currentNote.className = "version-current-note";
+      currentNote.textContent = "这就是当前资料状态，无需恢复。";
+      item.append(currentNote);
+    } else {
+      const restoreButton = document.createElement("button");
+      restoreButton.type = "button";
+      restoreButton.textContent = "恢复此版本";
+      restoreButton.addEventListener("click", () => restoreKnowledgeVersion(version, restoreButton));
+      item.append(restoreButton);
+    }
+    versionResults.append(item);
+  }
+}
+
+async function loadKnowledgeVersions() {
+  versionStatus.className = "version-status";
+  versionStatus.textContent = "正在读取本地版本...";
+  versionResults.innerHTML = "";
+  refreshKnowledgeVersionsButton.disabled = true;
+  try {
+    const response = await fetch("/knowledge/versions");
+    const data = await response.json();
+    if (!response.ok) throw new Error(getErrorMessage(data, "读取版本失败。"));
+    renderKnowledgeVersions(data);
+  } catch (error) {
+    versionStatus.className = "version-status error";
+    versionStatus.textContent = `读取失败：${error.message}`;
+  } finally {
+    refreshKnowledgeVersionsButton.disabled = false;
+  }
+}
+
+async function restoreKnowledgeVersion(version, button) {
+  const confirmed = window.confirm(
+    `恢复版本 #${version.id} 会覆盖当前的病症、药物和手写资料。系统会先自动备份当前资料，再重新建立向量库。确定恢复吗？`,
+  );
+  if (!confirmed) return;
+
+  button.disabled = true;
+  button.textContent = "正在恢复...";
+  try {
+    const response = await fetch(`/knowledge/versions/${version.id}/restore`, {
+      method: "POST",
+    });
+    const data = await response.json();
+    if (!response.ok) throw new Error(getErrorMessage(data, "恢复失败。"));
+    entryStatus.className = "manager-status";
+    entryStatus.textContent = `已恢复版本 #${data.restored_version_id}，并自动备份为版本 #${data.backup_version_id}。向量库已重建。`;
+    await Promise.all([
+      loadKnowledgeStatus(),
+      loadReviewQueue(),
+      loadKnowledgeVersions(),
+    ]);
+    if (searchInput.value.trim()) searchForm.requestSubmit();
+  } catch (error) {
+    entryStatus.className = "manager-status error";
+    entryStatus.textContent = `恢复失败：${error.message}`;
+    button.disabled = false;
+    button.textContent = "恢复此版本";
+  }
+}
+
 function renderSearchResults(data) {
   clearSearchResults();
   if (data.results.length === 0) {
@@ -519,7 +683,7 @@ function renderSearchResults(data) {
     title.textContent = item.title;
     const type = document.createElement("span");
     type.className = `type-chip ${item.type}`;
-    type.textContent = ({ condition: "病症", drug: "药物", document: "资料" })[item.type] || item.type;
+    type.textContent = getKnowledgeTypeLabel(item.type);
     header.append(title, type);
     const fields = document.createElement("p");
     const reviewNote = item.needs_review ? " | 需核验" : "";
@@ -581,6 +745,8 @@ async function createKnowledgeEntry(formElement, endpoint) {
     formElement.elements.source_tier.value = "unverified";
     entryStatus.textContent = `已保存“${data.name || data.title}”。知识库已变为待重建状态。`;
     await loadKnowledgeStatus();
+    await loadReviewQueue();
+    await loadKnowledgeVersions();
   } catch (error) {
     entryStatus.className = "manager-status error";
     entryStatus.textContent = `保存失败：${error.message}`;
@@ -611,6 +777,8 @@ async function uploadKnowledgeFile(event) {
     uploadForm.reset();
     entryStatus.textContent = `已上传“${data.title}”。知识库已变为待重建状态。`;
     await loadKnowledgeStatus();
+    await loadReviewQueue();
+    await loadKnowledgeVersions();
   } catch (error) {
     entryStatus.className = "manager-status error";
     entryStatus.textContent = `上传失败：${error.message}`;
@@ -691,6 +859,8 @@ async function saveEdit(event) {
     entryStatus.className = "manager-status";
     entryStatus.textContent = `已修改“${data.name || data.title}”。知识库已变为待重建状态。`;
     await loadKnowledgeStatus();
+    await loadReviewQueue();
+    await loadKnowledgeVersions();
     if (searchInput.value.trim()) searchForm.requestSubmit();
   } catch (error) {
     editStatus.className = "manager-status error";
@@ -720,6 +890,8 @@ async function deleteKnowledgeEntry(item) {
     }
     entryStatus.textContent = `已删除“${item.title}”。知识库已变为待重建状态。`;
     await loadKnowledgeStatus();
+    await loadReviewQueue();
+    await loadKnowledgeVersions();
     if (searchInput.value.trim()) searchForm.requestSubmit();
   } catch (error) {
     entryStatus.className = "manager-status error";
@@ -812,6 +984,8 @@ form.addEventListener("submit", async (event) => {
 newChatButton.addEventListener("click", resetConversation);
 refreshHistoryButton.addEventListener("click", loadConversationList);
 rebuildKnowledgeButton.addEventListener("click", rebuildKnowledge);
+refreshReviewQueueButton.addEventListener("click", loadReviewQueue);
+refreshKnowledgeVersionsButton.addEventListener("click", loadKnowledgeVersions);
 managerToggleButton.addEventListener("click", () => {
   setManagerVisible(knowledgeManager.classList.contains("is-hidden"));
 });

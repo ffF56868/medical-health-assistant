@@ -2,14 +2,24 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlmodel import Session, select
 
 from app.database import get_session
-from app.models import Condition, Drug, KnowledgeDocument
+from app.knowledge_versions import (
+    create_knowledge_snapshot,
+    get_current_snapshot_hash,
+    restore_snapshot_payload,
+)
+from app.models import Condition, Drug, KnowledgeDocument, KnowledgeSnapshot
 from app.schemas import (
     KnowledgeRebuildResponse,
+    KnowledgeRestoreResponse,
+    KnowledgeReviewItem,
+    KnowledgeReviewResponse,
     KnowledgeSearchItem,
     KnowledgeSearchResponse,
     KnowledgeStatusResponse,
+    KnowledgeVersionListResponse,
+    KnowledgeVersionRead,
 )
-from app.source_metadata import needs_source_review
+from app.source_metadata import get_source_review_reasons, needs_source_review
 from app.vector_store import get_knowledge_status, rebuild_vector_store
 
 
@@ -38,6 +48,29 @@ def build_excerpt(query: str, text: str, max_length: int = 240) -> str:
     return f"{prefix}{text[start:end]}{suffix}"
 
 
+def build_review_item(
+    record: Condition | Drug | KnowledgeDocument,
+    record_type: str,
+    title: str,
+) -> KnowledgeReviewItem | None:
+    review_reasons = get_source_review_reasons(
+        record.source,
+        record.source_tier,
+        record.updated_at,
+    )
+    if not review_reasons:
+        return None
+    return KnowledgeReviewItem(
+        type=record_type,
+        record_id=record.id,
+        title=title,
+        source=record.source,
+        source_tier=record.source_tier,
+        updated_at=record.updated_at,
+        review_reasons=review_reasons,
+    )
+
+
 @router.get("/status", response_model=KnowledgeStatusResponse)
 def get_status(session: Session = Depends(get_session)):
     return get_knowledge_status(session)
@@ -45,11 +78,108 @@ def get_status(session: Session = Depends(get_session)):
 
 @router.post("/rebuild", response_model=KnowledgeRebuildResponse)
 def rebuild_knowledge(session: Session = Depends(get_session)):
+    snapshot, snapshot_created = create_knowledge_snapshot(session, "rebuild")
+    session.commit()
     document_count, chunk_count = rebuild_vector_store(session)
     return KnowledgeRebuildResponse(
         message="知识库向量重建完成",
         document_count=document_count,
         chunk_count=chunk_count,
+        snapshot_id=snapshot.id,
+        snapshot_created=snapshot_created,
+    )
+
+
+@router.get("/versions", response_model=KnowledgeVersionListResponse)
+def list_knowledge_versions(
+    limit: int = Query(default=20, ge=1, le=100),
+    session: Session = Depends(get_session),
+):
+    current_hash = get_current_snapshot_hash(session)
+    snapshots = session.exec(
+        select(KnowledgeSnapshot)
+        .order_by(KnowledgeSnapshot.created_at.desc())
+        .limit(limit)
+    ).all()
+    total_count = len(session.exec(select(KnowledgeSnapshot)).all())
+    return KnowledgeVersionListResponse(
+        total_count=total_count,
+        versions=[
+            KnowledgeVersionRead(
+                id=snapshot.id,
+                document_count=snapshot.document_count,
+                reason=snapshot.reason,
+                created_at=snapshot.created_at,
+                is_current=snapshot.content_hash == current_hash,
+            )
+            for snapshot in snapshots
+        ],
+    )
+
+
+@router.post(
+    "/versions/{snapshot_id}/restore",
+    response_model=KnowledgeRestoreResponse,
+)
+def restore_knowledge_version(
+    snapshot_id: int,
+    session: Session = Depends(get_session),
+):
+    snapshot = session.get(KnowledgeSnapshot, snapshot_id)
+    if snapshot is None:
+        raise HTTPException(status_code=404, detail="知识库版本不存在")
+
+    backup_snapshot, _ = create_knowledge_snapshot(session, "pre_restore")
+    session.commit()
+    try:
+        restore_snapshot_payload(session, snapshot)
+        document_count, chunk_count = rebuild_vector_store(session)
+    except ValueError as error:
+        session.rollback()
+        raise HTTPException(status_code=422, detail=str(error)) from error
+    except Exception as error:
+        session.rollback()
+        raise HTTPException(
+            status_code=503,
+            detail="恢复后重建向量库失败，当前版本已保留，可重试恢复",
+        ) from error
+
+    return KnowledgeRestoreResponse(
+        message="已恢复知识库版本，并完成向量重建",
+        restored_version_id=snapshot.id,
+        backup_version_id=backup_snapshot.id,
+        document_count=document_count,
+        chunk_count=chunk_count,
+    )
+
+
+@router.get("/review-queue", response_model=KnowledgeReviewResponse)
+def get_review_queue(
+    limit: int = Query(default=100, ge=1, le=500),
+    session: Session = Depends(get_session),
+):
+    """List sources that still need human verification or refresh."""
+    items: list[KnowledgeReviewItem] = []
+    record_sets = (
+        ("condition", session.exec(select(Condition).order_by(Condition.id)).all()),
+        ("drug", session.exec(select(Drug).order_by(Drug.id)).all()),
+        (
+            "document",
+            session.exec(
+                select(KnowledgeDocument).order_by(KnowledgeDocument.id)
+            ).all(),
+        ),
+    )
+    for record_type, records in record_sets:
+        for record in records:
+            title = record.name if record_type != "document" else record.title
+            item = build_review_item(record, record_type, title)
+            if item is not None:
+                items.append(item)
+
+    return KnowledgeReviewResponse(
+        total_count=len(items),
+        results=items[:limit],
     )
 
 
@@ -84,6 +214,7 @@ def search_knowledge(
                     needs_review=needs_source_review(
                         condition.source_tier,
                         condition.updated_at,
+                        condition.source,
                     ),
                     matched_fields=matched_fields,
                     excerpt=build_excerpt(query, "\n".join(fields.values())),
@@ -109,6 +240,7 @@ def search_knowledge(
                     needs_review=needs_source_review(
                         drug.source_tier,
                         drug.updated_at,
+                        drug.source,
                     ),
                     matched_fields=matched_fields,
                     excerpt=build_excerpt(query, "\n".join(fields.values())),
@@ -136,6 +268,7 @@ def search_knowledge(
                     needs_review=needs_source_review(
                         document.source_tier,
                         document.updated_at,
+                        document.source,
                     ),
                     matched_fields=matched_fields,
                     excerpt=build_excerpt(query, "\n".join(fields.values())),
