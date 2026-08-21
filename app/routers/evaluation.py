@@ -11,6 +11,9 @@ from app.schemas import (
     RAGEvaluationHistoryRead,
     RAGEvaluationHistoryResponse,
     RAGEvaluationResponse,
+    RetrievalDiagnosticCandidate,
+    RetrievalDiagnosticCaseResult,
+    RetrievalDiagnosticResponse,
     RetrievalComparisonCaseResult,
     RetrievalComparisonResponse,
     RetrievalStrategyResult,
@@ -145,6 +148,96 @@ def compare_case(
         baseline=baseline,
         current=current,
         change=change,
+    )
+
+
+def get_match_name(document: object) -> str:
+    return str(getattr(document, "metadata", {}).get("name", "未命名资料"))
+
+
+def get_match_type(document: object) -> str:
+    return str(getattr(document, "metadata", {}).get("type", "unknown"))
+
+
+def build_diagnostic_case(
+    vector_store: object,
+    case: dict[str, str],
+) -> RetrievalDiagnosticCaseResult:
+    raw_matches = vector_store.similarity_search_with_relevance_scores(
+        case["question"],
+        k=RAG_RETRIEVAL_FETCH_COUNT,
+    )
+    selected_matches = select_distinct_relevant_matches(
+        raw_matches,
+        limit=RAG_RETRIEVAL_RESULT_COUNT,
+    )
+    strategy_result = build_strategy_result(selected_matches, case)
+    candidates = [
+        RetrievalDiagnosticCandidate(
+            rank=rank,
+            name=get_match_name(document),
+            type=get_match_type(document),
+            relevance_score=round(score, 3),
+        )
+        for rank, (document, score) in enumerate(selected_matches, start=1)
+    ]
+    expected_raw_match = next(
+        (
+            (rank, score)
+            for rank, (document, score) in enumerate(raw_matches, start=1)
+            if get_match_name(document) == case["expected_name"]
+            and get_match_type(document) == case["expected_type"]
+        ),
+        None,
+    )
+
+    if strategy_result.expected_rank == 1:
+        diagnostic_level = "healthy"
+        diagnostic = "目标资料位于首位，当前检索表现正常。"
+        suggested_action = "暂不需要为这道题调整资料或检索参数。"
+    elif strategy_result.expected_rank is not None:
+        diagnostic_level = "attention"
+        diagnostic = (
+            f"目标资料命中第 {strategy_result.expected_rank} 条，"
+            "能被找到，但前面还有更相近的资料。"
+        )
+        suggested_action = (
+            "可在目标资料标题或正文中补充用户会使用的关键词，"
+            "再运行评测确认排名变化。"
+        )
+    elif expected_raw_match is None:
+        diagnostic_level = "failed"
+        diagnostic = "目标资料没有进入前 8 个向量候选，语义关联不足。"
+        suggested_action = (
+            "检查目标资料是否缺少问题中的核心词，或补充更直接对应的资料内容。"
+        )
+    elif expected_raw_match[1] < MIN_RELEVANCE_SCORE:
+        diagnostic_level = "failed"
+        diagnostic = (
+            f"目标资料进入候选的第 {expected_raw_match[0]} 条，"
+            f"但相关度 {expected_raw_match[1]:.3f} 低于阈值 {MIN_RELEVANCE_SCORE}。"
+        )
+        suggested_action = (
+            "在资料标题和正文中补充问题常用的表达，再重建知识库并运行评测。"
+        )
+    else:
+        diagnostic_level = "failed"
+        diagnostic = (
+            f"目标资料进入候选的第 {expected_raw_match[0]} 条，"
+            "但被更高相关度的不同资料挤出了最终前 3 条。"
+        )
+        suggested_action = (
+            "补充目标资料的关键词或内容；若业务确实需要更多来源，可再评估是否调整最终保留数量。"
+        )
+
+    return RetrievalDiagnosticCaseResult(
+        **case,
+        passed=strategy_result.passed,
+        expected_rank=strategy_result.expected_rank,
+        diagnostic_level=diagnostic_level,
+        diagnostic=diagnostic,
+        suggested_action=suggested_action,
+        candidates=candidates,
     )
 
 
@@ -308,5 +401,36 @@ def compare_retrieval_strategies(session: Session = Depends(get_session)):
         improved_count=sum(result.change == "improved" for result in results),
         regressed_count=sum(result.change == "regressed" for result in results),
         unchanged_count=sum(result.change == "unchanged" for result in results),
+        results=results,
+    )
+
+
+@router.post("/diagnose", response_model=RetrievalDiagnosticResponse)
+def diagnose_retrieval(session: Session = Depends(get_session)):
+    """Explain why each evaluation target did or did not reach the live top three."""
+    knowledge_status = get_knowledge_status(session)
+    if not knowledge_status["is_current"]:
+        raise HTTPException(
+            status_code=409,
+            detail="知识库已过期，请先重建知识库后再运行检索诊断",
+        )
+
+    try:
+        vector_store = get_vector_store()
+        cases, _ = get_evaluation_cases(session)
+        results = [build_diagnostic_case(vector_store, case) for case in cases]
+    except Exception as error:
+        raise HTTPException(
+            status_code=503,
+            detail="检索诊断暂时不可用，请检查知识库和 Embedding 配置",
+        ) from error
+
+    return RetrievalDiagnosticResponse(
+        total_count=len(results),
+        healthy_count=sum(result.diagnostic_level == "healthy" for result in results),
+        attention_count=sum(
+            result.diagnostic_level == "attention" for result in results
+        ),
+        failed_count=sum(result.diagnostic_level == "failed" for result in results),
         results=results,
     )

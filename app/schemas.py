@@ -264,6 +264,35 @@ class RetrievalComparisonResponse(SQLModel):
     results: list[RetrievalComparisonCaseResult] = Field(default_factory=list)
 
 
+class RetrievalDiagnosticCandidate(SQLModel):
+    rank: int
+    name: str
+    type: str
+    relevance_score: float
+
+
+class RetrievalDiagnosticCaseResult(SQLModel):
+    case_id: str
+    case_source: str
+    question: str
+    expected_name: str
+    expected_type: str
+    passed: bool
+    expected_rank: int | None = None
+    diagnostic_level: str
+    diagnostic: str
+    suggested_action: str
+    candidates: list[RetrievalDiagnosticCandidate] = Field(default_factory=list)
+
+
+class RetrievalDiagnosticResponse(SQLModel):
+    total_count: int
+    healthy_count: int
+    attention_count: int
+    failed_count: int
+    results: list[RetrievalDiagnosticCaseResult] = Field(default_factory=list)
+
+
 class RAGEvaluationResponse(SQLModel):
     history_id: int
     total_count: int

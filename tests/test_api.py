@@ -317,6 +317,96 @@ def test_retrieval_comparison_reports_deduplication_improvement(client, monkeypa
     assert [k for _, k in vector_store.queries] == [3, 8]
 
 
+def test_retrieval_diagnosis_explains_a_lower_rank_target(client, monkeypatch):
+    case = {
+        "case_id": "diagnosis-case",
+        "case_source": "默认题",
+        "question": "目标资料在哪里？",
+        "expected_name": "目标资料",
+        "expected_type": "document",
+    }
+    vector_store = FakeComparisonVectorStore(
+        [
+            (
+                Document(
+                    page_content="更相近资料",
+                    metadata={"name": "更相近资料", "type": "document", "record_id": 1},
+                ),
+                0.92,
+            ),
+            (
+                Document(
+                    page_content="目标资料内容",
+                    metadata={"name": "目标资料", "type": "document", "record_id": 2},
+                ),
+                0.81,
+            ),
+        ]
+    )
+    monkeypatch.setattr(evaluation_router, "EVALUATION_CASES", (case,))
+    monkeypatch.setattr(
+        evaluation_router,
+        "get_knowledge_status",
+        lambda session: {"is_current": True},
+    )
+    monkeypatch.setattr(
+        evaluation_router,
+        "get_vector_store",
+        lambda: vector_store,
+    )
+
+    response = client.post("/evaluation/diagnose")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["healthy_count"] == 0
+    assert data["attention_count"] == 1
+    assert data["failed_count"] == 0
+    assert data["results"][0]["expected_rank"] == 2
+    assert data["results"][0]["diagnostic_level"] == "attention"
+    assert data["results"][0]["candidates"][0]["name"] == "更相近资料"
+
+
+def test_retrieval_diagnosis_explains_a_missing_target(client, monkeypatch):
+    case = {
+        "case_id": "missing-diagnosis-case",
+        "case_source": "默认题",
+        "question": "目标资料在哪里？",
+        "expected_name": "目标资料",
+        "expected_type": "document",
+    }
+    vector_store = FakeComparisonVectorStore(
+        [
+            (
+                Document(
+                    page_content="不相关资料",
+                    metadata={"name": "不相关资料", "type": "document", "record_id": 1},
+                ),
+                0.91,
+            )
+        ]
+    )
+    monkeypatch.setattr(evaluation_router, "EVALUATION_CASES", (case,))
+    monkeypatch.setattr(
+        evaluation_router,
+        "get_knowledge_status",
+        lambda session: {"is_current": True},
+    )
+    monkeypatch.setattr(
+        evaluation_router,
+        "get_vector_store",
+        lambda: vector_store,
+    )
+
+    response = client.post("/evaluation/diagnose")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["failed_count"] == 1
+    assert data["results"][0]["diagnostic_level"] == "failed"
+    assert "没有进入前 8 个向量候选" in data["results"][0]["diagnostic"]
+
+
 def test_rag_evaluation_saves_and_lists_history(client, monkeypatch):
     vector_store = FakeEvaluationVectorStore()
     monkeypatch.setattr(

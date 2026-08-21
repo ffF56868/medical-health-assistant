@@ -328,6 +328,32 @@ h2 { font-size: 20px; margin: 0; }
 
 .comparison-result.regressed .comparison-change { color: #9c3024; }
 
+.retrieval-diagnosis { border-top: 1px solid #dce4e5; margin-top: 18px; padding-top: 14px; }
+
+.retrieval-diagnosis h4 { color: #254b4d; font-size: 14px; margin: 0; }
+
+.diagnosis-status { color: #526166; font-size: 13px; min-height: 20px; margin: 8px 0 0; }
+
+.diagnosis-status.error { color: #9c3024; }
+
+.diagnosis-metrics { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+
+.diagnosis-results { display: grid; gap: 8px; margin-top: 12px; }
+
+.diagnosis-result { border-left: 3px solid #86aaa6; padding: 7px 0 7px 10px; }
+
+.diagnosis-result.attention { border-left-color: #d49a27; }
+
+.diagnosis-result.failed { border-left-color: #c1543f; }
+
+.diagnosis-result h5 { color: #254b4d; font-size: 14px; margin: 0; }
+
+.diagnosis-result p { color: #526166; font-size: 13px; line-height: 1.55; margin: 3px 0 0; }
+
+.diagnosis-result .diagnosis-action { color: #315b5d; }
+
+.diagnosis-result .diagnosis-candidates { color: #607176; font-size: 12px; }
+
 .evaluation-history { border-top: 1px solid #dce4e5; margin-top: 18px; padding-top: 14px; }
 
 .evaluation-history-heading { align-items: center; display: flex; justify-content: space-between; }

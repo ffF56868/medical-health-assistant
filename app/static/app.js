@@ -38,6 +38,7 @@ const versionResults = document.querySelector("#version-results");
 const refreshKnowledgeVersionsButton = document.querySelector("#refresh-knowledge-versions");
 const runRagEvaluationButton = document.querySelector("#run-rag-evaluation");
 const compareRetrievalButton = document.querySelector("#compare-retrieval");
+const diagnoseRetrievalButton = document.querySelector("#diagnose-retrieval");
 const evaluationStatus = document.querySelector("#evaluation-status");
 const evaluationMetrics = document.querySelector("#evaluation-metrics");
 const evaluationResults = document.querySelector("#evaluation-results");
@@ -53,6 +54,9 @@ const customEvaluationList = document.querySelector("#custom-evaluation-list");
 const comparisonStatus = document.querySelector("#comparison-status");
 const comparisonMetrics = document.querySelector("#comparison-metrics");
 const comparisonResults = document.querySelector("#comparison-results");
+const diagnosisStatus = document.querySelector("#diagnosis-status");
+const diagnosisMetrics = document.querySelector("#diagnosis-metrics");
+const diagnosisResults = document.querySelector("#diagnosis-results");
 
 const SOURCE_TIER_OPTIONS = [
   ["authority", "权威机构"],
@@ -620,6 +624,41 @@ function renderRetrievalComparison(data) {
   }
 }
 
+function renderRetrievalDiagnosis(data) {
+  diagnosisMetrics.innerHTML = "";
+  const metrics = [
+    ["表现正常", data.healthy_count],
+    ["可优化", data.attention_count],
+    ["未命中", data.failed_count],
+  ];
+  for (const [label, value] of metrics) {
+    const metric = document.createElement("div");
+    metric.className = "evaluation-metric";
+    metric.textContent = `${label}：${value}`;
+    diagnosisMetrics.append(metric);
+  }
+
+  diagnosisResults.innerHTML = "";
+  for (const result of data.results) {
+    const item = document.createElement("article");
+    item.className = `diagnosis-result ${result.diagnostic_level}`;
+    const title = document.createElement("h5");
+    title.textContent = result.question;
+    const diagnostic = document.createElement("p");
+    diagnostic.textContent = result.diagnostic;
+    const action = document.createElement("p");
+    action.className = "diagnosis-action";
+    action.textContent = `建议：${result.suggested_action}`;
+    const candidates = document.createElement("p");
+    candidates.className = "diagnosis-candidates";
+    candidates.textContent = result.candidates.length
+      ? `当前前三条：${result.candidates.map((item) => `${item.rank}. ${getKnowledgeTypeLabel(item.type)}“${item.name}” (${item.relevance_score})`).join("；")}`
+      : "当前前三条：没有达到相关度阈值的资料。";
+    item.append(title, diagnostic, action, candidates);
+    diagnosisResults.append(item);
+  }
+}
+
 function renderCustomEvaluationCases(data) {
   customEvaluationList.innerHTML = "";
   if (data.cases.length === 0) {
@@ -788,6 +827,33 @@ async function compareRetrievalStrategies() {
   } finally {
     compareRetrievalButton.disabled = false;
     compareRetrievalButton.textContent = "对比新旧检索";
+  }
+}
+
+async function diagnoseCurrentRetrieval() {
+  const confirmed = window.confirm(
+    "将诊断默认题和自定义题的当前检索结果，只调用 Embedding，不生成模型回答，可能消耗少量额度。确定继续吗？",
+  );
+  if (!confirmed) return;
+
+  diagnoseRetrievalButton.disabled = true;
+  diagnoseRetrievalButton.textContent = "正在诊断...";
+  diagnosisStatus.className = "diagnosis-status";
+  diagnosisStatus.textContent = "正在分析目标资料的候选位置和最终排名...";
+  diagnosisMetrics.innerHTML = "";
+  diagnosisResults.innerHTML = "";
+  try {
+    const response = await fetch("/evaluation/diagnose", { method: "POST" });
+    const data = await response.json();
+    if (!response.ok) throw new Error(getErrorMessage(data, "检索诊断失败。"));
+    renderRetrievalDiagnosis(data);
+    diagnosisStatus.textContent = "诊断完成。可根据每题建议补充资料关键词或内容。";
+  } catch (error) {
+    diagnosisStatus.className = "diagnosis-status error";
+    diagnosisStatus.textContent = `诊断失败：${error.message}`;
+  } finally {
+    diagnoseRetrievalButton.disabled = false;
+    diagnoseRetrievalButton.textContent = "诊断当前检索";
   }
 }
 
@@ -1259,6 +1325,7 @@ refreshReviewQueueButton.addEventListener("click", loadReviewQueue);
 refreshKnowledgeVersionsButton.addEventListener("click", loadKnowledgeVersions);
 runRagEvaluationButton.addEventListener("click", runRagEvaluation);
 compareRetrievalButton.addEventListener("click", compareRetrievalStrategies);
+diagnoseRetrievalButton.addEventListener("click", diagnoseCurrentRetrieval);
 refreshEvaluationHistoryButton.addEventListener("click", loadEvaluationHistory);
 customEvaluationForm.addEventListener("submit", addCustomEvaluationCase);
 managerToggleButton.addEventListener("click", () => {

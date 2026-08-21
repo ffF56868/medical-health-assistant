@@ -170,6 +170,7 @@
                 <h3 id="evaluation-title">RAG 基准评测</h3>
               </div>
               <div class="evaluation-actions">
+                <button class="secondary-button" id="diagnose-retrieval" type="button">诊断当前检索</button>
                 <button class="secondary-button" id="compare-retrieval" type="button">对比新旧检索</button>
                 <button class="secondary-button" id="run-rag-evaluation" type="button">运行全部评测</button>
               </div>
@@ -200,6 +201,12 @@
               <p class="comparison-status" id="comparison-status" aria-live="polite"></p>
               <div class="comparison-metrics" id="comparison-metrics"></div>
               <div class="comparison-results" id="comparison-results"></div>
+            </section>
+            <section class="retrieval-diagnosis" aria-labelledby="retrieval-diagnosis-title">
+              <h4 id="retrieval-diagnosis-title">检索诊断</h4>
+              <p class="diagnosis-status" id="diagnosis-status" aria-live="polite"></p>
+              <div class="diagnosis-metrics" id="diagnosis-metrics"></div>
+              <div class="diagnosis-results" id="diagnosis-results"></div>
             </section>
             <section class="evaluation-history" aria-labelledby="evaluation-history-title">
               <div class="evaluation-history-heading">
