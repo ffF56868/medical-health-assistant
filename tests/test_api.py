@@ -409,6 +409,117 @@ def test_rag_evaluation_warns_when_a_previous_hit_regresses(client, monkeypatch)
     assert quality_gate["regressed_questions"] == ["目标资料在哪里？"]
 
 
+def test_rag_evaluation_reports_new_cases_separately_from_regressions(client, monkeypatch):
+    baseline_case = {
+        "case_id": "existing-case",
+        "case_source": "默认题",
+        "question": "已有测试题",
+        "expected_name": "目标资料",
+        "expected_type": "document",
+        "category": "基础覆盖",
+    }
+    added_case = {
+        "case_id": "added-case",
+        "case_source": "默认题",
+        "question": "新增测试题",
+        "expected_name": "目标资料",
+        "expected_type": "document",
+        "category": "基础覆盖",
+    }
+    vector_store = FakeComparisonVectorStore(
+        [
+            (
+                Document(
+                    page_content="目标资料内容",
+                    metadata={"name": "目标资料", "type": "document", "record_id": 1},
+                ),
+                0.9,
+            )
+        ]
+    )
+    monkeypatch.setattr(evaluation_router, "EVALUATION_CASES", (baseline_case,))
+    monkeypatch.setattr(
+        evaluation_router,
+        "get_knowledge_status",
+        lambda session: {"is_current": True},
+    )
+    monkeypatch.setattr(evaluation_router, "get_vector_store", lambda: vector_store)
+
+    assert client.post("/evaluation/run").status_code == 200
+
+    monkeypatch.setattr(
+        evaluation_router,
+        "EVALUATION_CASES",
+        (baseline_case, added_case),
+    )
+    response = client.post("/evaluation/run")
+
+    assert response.status_code == 200
+    quality_gate = response.json()["quality_gate"]
+    assert quality_gate["status"] == "expanded"
+    assert quality_gate["new_questions"] == ["新增测试题"]
+    assert quality_gate["regressed_questions"] == []
+
+
+def test_rag_evaluation_flags_a_lower_rank_without_calling_it_a_failure(
+    client,
+    monkeypatch,
+):
+    case = {
+        "case_id": "rank-regression-case",
+        "case_source": "默认题",
+        "question": "目标资料在哪里？",
+        "expected_name": "目标资料",
+        "expected_type": "document",
+        "category": "检索回归测试",
+    }
+    vector_store = FakeComparisonVectorStore(
+        [
+            (
+                Document(
+                    page_content="目标资料内容",
+                    metadata={"name": "目标资料", "type": "document", "record_id": 1},
+                ),
+                0.9,
+            )
+        ]
+    )
+    monkeypatch.setattr(evaluation_router, "EVALUATION_CASES", (case,))
+    monkeypatch.setattr(
+        evaluation_router,
+        "get_knowledge_status",
+        lambda session: {"is_current": True},
+    )
+    monkeypatch.setattr(evaluation_router, "get_vector_store", lambda: vector_store)
+
+    assert client.post("/evaluation/run").status_code == 200
+
+    vector_store.matches = [
+        (
+            Document(
+                page_content="更相近资料",
+                metadata={"name": "更相近资料", "type": "document", "record_id": 2},
+            ),
+            0.99,
+        ),
+        (
+            Document(
+                page_content="目标资料内容",
+                metadata={"name": "目标资料", "type": "document", "record_id": 1},
+            ),
+            0.9,
+        ),
+    ]
+    response = client.post("/evaluation/run")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["results"][0]["passed"] is True
+    assert data["results"][0]["expected_rank"] == 2
+    assert data["quality_gate"]["status"] == "attention"
+    assert data["quality_gate"]["rank_regressed_questions"] == ["目标资料在哪里？"]
+
+
 def test_retrieval_comparison_reports_deduplication_improvement(client, monkeypatch):
     case = {
         "case_id": "deduplication-case",
@@ -594,7 +705,9 @@ def test_rag_evaluation_saves_and_lists_history(client, monkeypatch):
     history_data = history_response.json()
     assert history_data["total_count"] == 1
     assert history_data["runs"][0]["id"] == run_data["history_id"]
-    assert history_data["runs"][0]["passed_count"] == 4
+    assert history_data["runs"][0]["passed_count"] == len(
+        evaluation_router.EVALUATION_CASES
+    )
     assert history_data["runs"][0]["knowledge_document_count"] == 13
 
 

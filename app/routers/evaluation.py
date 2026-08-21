@@ -71,6 +71,70 @@ EVALUATION_CASES = (
         "category": "紧急警示",
         "case_source": "默认题",
     },
+    {
+        "case_id": "drug-acetaminophen",
+        "question": "对乙酰氨基酚常用于缓解什么不适？",
+        "expected_name": "对乙酰氨基酚",
+        "expected_type": "drug",
+        "category": "用药信息",
+        "case_source": "默认题",
+    },
+    {
+        "case_id": "drug-loratadine",
+        "question": "鼻痒、喷嚏和流清鼻涕的相关药物资料是什么？",
+        "expected_name": "氯雷他定",
+        "expected_type": "drug",
+        "category": "用药信息",
+        "case_source": "默认题",
+    },
+    {
+        "case_id": "drug-amoxicillin-safety",
+        "question": "阿莫西林对普通感冒有什么提示？",
+        "expected_name": "阿莫西林",
+        "expected_type": "drug",
+        "category": "用药信息",
+        "case_source": "默认题",
+    },
+    {
+        "case_id": "drug-oseltamivir",
+        "question": "奥司他韦主要用于什么情况？",
+        "expected_name": "奥司他韦",
+        "expected_type": "drug",
+        "category": "用药信息",
+        "case_source": "默认题",
+    },
+    {
+        "case_id": "drug-diosmectite",
+        "question": "急性腹泻的对症处理可参考什么药物资料？",
+        "expected_name": "蒙脱石散",
+        "expected_type": "drug",
+        "category": "用药信息",
+        "case_source": "默认题",
+    },
+    {
+        "case_id": "influenza-symptoms",
+        "question": "发热、肌肉酸痛和乏力的相关病症资料是什么？",
+        "expected_name": "流行性感冒",
+        "expected_type": "condition",
+        "category": "症状相关",
+        "case_source": "默认题",
+    },
+    {
+        "case_id": "reflux-symptoms",
+        "question": "反酸、烧心且饭后躺下加重的相关病症资料是什么？",
+        "expected_name": "胃食管反流",
+        "expected_type": "condition",
+        "category": "症状相关",
+        "case_source": "默认题",
+    },
+    {
+        "case_id": "migraine-symptoms",
+        "question": "反复搏动性头痛并伴随畏光的相关病症资料是什么？",
+        "expected_name": "偏头痛",
+        "expected_type": "condition",
+        "category": "症状相关",
+        "case_source": "默认题",
+    },
 )
 
 
@@ -321,6 +385,7 @@ def build_result_snapshot(results: list[RAGEvaluationCaseResult]) -> list[dict]:
             "question": result.question,
             "category": result.category,
             "passed": result.passed,
+            "expected_rank": result.expected_rank,
         }
         for result in results
     ]
@@ -365,15 +430,32 @@ def build_quality_gate(
     }
     regressed_questions: list[str] = []
     improved_questions: list[str] = []
+    new_questions: list[str] = []
+    rank_regressed_questions: list[str] = []
+    rank_improved_questions: list[str] = []
     for result in results:
         previous_result = previous_results.get(result.case_id)
         if previous_result is None:
+            new_questions.append(result.question)
             continue
         previous_passed = previous_result.get("passed")
         if previous_passed is True and not result.passed:
             regressed_questions.append(result.question)
         elif previous_passed is False and result.passed:
             improved_questions.append(result.question)
+        else:
+            previous_rank = previous_result.get("expected_rank")
+            current_rank = result.expected_rank
+            if (
+                previous_passed is True
+                and result.passed
+                and isinstance(previous_rank, int)
+                and current_rank is not None
+            ):
+                if current_rank > previous_rank:
+                    rank_regressed_questions.append(result.question)
+                elif current_rank < previous_rank:
+                    rank_improved_questions.append(result.question)
 
     if regressed_questions:
         return RAGEvaluationQualityGate(
@@ -385,16 +467,49 @@ def build_quality_gate(
             ),
             regressed_questions=regressed_questions,
             improved_questions=improved_questions,
+            new_questions=new_questions,
+            rank_regressed_questions=rank_regressed_questions,
+            rank_improved_questions=rank_improved_questions,
         )
-    if improved_questions:
+    if rank_regressed_questions:
+        return RAGEvaluationQualityGate(
+            status="attention",
+            compared_history_id=previous_run.id,
+            message=(
+                f"有 {len(rank_regressed_questions)} 道题仍然通过，"
+                "但目标资料的排名下降了。"
+            ),
+            rank_regressed_questions=rank_regressed_questions,
+            rank_improved_questions=rank_improved_questions,
+            new_questions=new_questions,
+        )
+    if improved_questions or rank_improved_questions:
+        message = (
+            f"本次有 {len(improved_questions)} 道题从未通过变为通过，"
+            "且没有发现回退。"
+            if improved_questions
+            else (
+                f"本次有 {len(rank_improved_questions)} 道题的目标资料排名提升，"
+                "且没有发现回退。"
+            )
+        )
         return RAGEvaluationQualityGate(
             status="improved",
             compared_history_id=previous_run.id,
-            message=(
-                f"本次有 {len(improved_questions)} 道题从未通过变为通过，"
-                "且没有发现回退。"
-            ),
+            message=message,
             improved_questions=improved_questions,
+            new_questions=new_questions,
+            rank_improved_questions=rank_improved_questions,
+        )
+    if new_questions:
+        return RAGEvaluationQualityGate(
+            status="expanded",
+            compared_history_id=previous_run.id,
+            message=(
+                f"本次新增 {len(new_questions)} 道评测题；"
+                "已有题没有发现通过状态回退。"
+            ),
+            new_questions=new_questions,
         )
     return RAGEvaluationQualityGate(
         status="stable",

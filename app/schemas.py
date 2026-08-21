@@ -315,6 +315,9 @@ class RAGEvaluationQualityGate(SQLModel):
     message: str
     regressed_questions: list[str] = Field(default_factory=list)
     improved_questions: list[str] = Field(default_factory=list)
+    new_questions: list[str] = Field(default_factory=list)
+    rank_regressed_questions: list[str] = Field(default_factory=list)
+    rank_improved_questions: list[str] = Field(default_factory=list)
 
 
 class RAGEvaluationResponse(SQLModel):

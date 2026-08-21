@@ -306,6 +306,8 @@ h2 { font-size: 20px; margin: 0; }
 
 .evaluation-quality-gate.warning { background: #fff6e7; border-left-color: #c1543f; color: #8b4b10; }
 
+.evaluation-quality-gate.attention { background: #fff8e8; border-left-color: #d49a27; color: #765016; }
+
 .evaluation-quality-gate.improved { border-left-color: #387f5e; }
 
 .evaluation-quality-gate p { margin: 3px 0 0; }

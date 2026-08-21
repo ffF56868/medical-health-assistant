@@ -606,6 +606,8 @@ function renderEvaluationQualityGate(gate) {
     stable: "质量检查通过",
     improved: "质量有所提升",
     warning: "发现能力回退",
+    attention: "排名需要关注",
+    expanded: "测试覆盖已扩展",
   })[gate.status] || "质量检查";
   const message = document.createElement("p");
   message.textContent = gate.message;
@@ -620,6 +622,21 @@ function renderEvaluationQualityGate(gate) {
     const improvements = document.createElement("p");
     improvements.textContent = `提升题：${gate.improved_questions.join("；")}`;
     evaluationQualityGate.append(improvements);
+  }
+  if (gate.new_questions.length) {
+    const additions = document.createElement("p");
+    additions.textContent = `新增题：${gate.new_questions.join("；")}`;
+    evaluationQualityGate.append(additions);
+  }
+  if (gate.rank_regressed_questions.length) {
+    const rankRegressions = document.createElement("p");
+    rankRegressions.textContent = `排名下降题：${gate.rank_regressed_questions.join("；")}`;
+    evaluationQualityGate.append(rankRegressions);
+  }
+  if (gate.rank_improved_questions.length) {
+    const rankImprovements = document.createElement("p");
+    rankImprovements.textContent = `排名提升题：${gate.rank_improved_questions.join("；")}`;
+    evaluationQualityGate.append(rankImprovements);
   }
 }
 
