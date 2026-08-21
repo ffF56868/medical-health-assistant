@@ -15,10 +15,12 @@ class FakeVectorStore:
         self.matches = matches
         self.last_query = None
         self.last_k = None
+        self.last_filter = None
 
-    def similarity_search_with_relevance_scores(self, query, k):
+    def similarity_search_with_relevance_scores(self, query, k, filter=None):
         self.last_query = query
         self.last_k = k
+        self.last_filter = filter
         return self.matches
 
 
@@ -935,6 +937,7 @@ def test_rag_keeps_the_best_chunk_and_returns_structured_references(
     assert data["answer"] == "这是测试模型回答。"
     assert data["source"] == "chroma-retrieval-openai-generation"
     assert vector_store.last_k == 8
+    assert vector_store.last_filter is None
     assert chat_model.call_count == 1
     assert [item["name"] for item in data["references"]] == [
         "睡眠健康提示",
@@ -946,6 +949,7 @@ def test_rag_keeps_the_best_chunk_and_returns_structured_references(
     assert data["references"][0]["source_tier"] == "unverified"
     assert data["references"][0]["needs_review"] is True
     assert data["processing_path"] == "rag-vector-retrieval"
+    assert data["retrieval_scope"] == "all"
     assert data["retrieved_count"] == 2
     assert data["latency_ms"] >= 0
 
@@ -979,6 +983,50 @@ def test_rag_returns_no_match_without_calling_the_chat_model(client, monkeypatch
     data = response.json()
     assert data["source"] == "chroma-vector-search:no-match"
     assert data["references"] == []
+
+
+def test_rag_limits_vector_search_to_the_selected_knowledge_type(client, monkeypatch):
+    mock_current_knowledge_base(monkeypatch)
+    vector_store = FakeVectorStore(
+        [
+            (
+                Document(
+                    page_content="氯雷他定用于缓解过敏相关不适。",
+                    metadata={"type": "drug", "record_id": 3, "name": "氯雷他定"},
+                ),
+                0.9,
+            )
+        ]
+    )
+    monkeypatch.setattr(ask_router, "get_vector_store", lambda: vector_store)
+    monkeypatch.setattr(ask_router, "get_chat_model", FakeChatModel)
+
+    response = client.post(
+        "/ask",
+        json={
+            "conversation_id": "test-rag-drug-scope",
+            "question": "相关药物资料是什么？",
+            "knowledge_type": "drug",
+        },
+    )
+
+    assert response.status_code == 200
+    assert vector_store.last_filter == {"type": "drug"}
+    assert response.json()["retrieval_scope"] == "drug"
+
+
+def test_rag_rejects_an_unknown_knowledge_type(client):
+    response = client.post(
+        "/ask",
+        json={
+            "conversation_id": "test-rag-invalid-scope",
+            "question": "布洛芬有什么作用？",
+            "knowledge_type": "unknown",
+        },
+    )
+
+    assert response.status_code == 422
+    assert "检索范围必须是 all、condition、drug 或 document" in response.text
 
 
 def test_rag_rejects_requests_when_the_knowledge_base_is_outdated(
@@ -1022,6 +1070,7 @@ def test_rag_streams_tokens_and_saves_the_completed_answer(client, monkeypatch):
         json={
             "conversation_id": "test-streaming-answer",
             "question": "布洛芬有什么作用？",
+            "knowledge_type": "drug",
         },
     )
 
@@ -1032,9 +1081,11 @@ def test_rag_streams_tokens_and_saves_the_completed_answer(client, monkeypatch):
     assert '"text": "这是分段返回"' in response.text
     assert '"text": "的测试回答。"' in response.text
     assert '"processing_path": "rag-vector-retrieval"' in response.text
+    assert '"retrieval_scope": "drug"' in response.text
     assert '"retrieved_count": 1' in response.text
     assert "event: done" in response.text
     assert chat_model.call_count == 1
+    assert vector_store.last_filter == {"type": "drug"}
 
     messages = client.get("/conversations/test-streaming-answer/messages")
     assert [message["content"] for message in messages.json()] == [

@@ -235,7 +235,16 @@
         <form class="composer" id="ask-form">
           <label class="sr-only" for="question">输入健康问题</label>
           <textarea id="question" rows="1" maxlength="1000" placeholder="输入你的健康问题..." required></textarea>
-          <button id="send-button" type="submit">发送</button>
+          <div class="composer-actions">
+            <label for="retrieval-scope">检索范围</label>
+            <select id="retrieval-scope">
+              <option value="all">全部资料</option>
+              <option value="condition">仅病症</option>
+              <option value="drug">仅药物</option>
+              <option value="document">仅健康资料</option>
+            </select>
+            <button id="send-button" type="submit">发送</button>
+          </div>
           <p class="composer-note">如出现呼吸困难、持续胸痛、意识改变等紧急情况，请立即寻求紧急医疗帮助。</p>
         </form>
       </main>

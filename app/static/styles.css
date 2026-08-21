@@ -432,7 +432,15 @@ h2 { font-size: 20px; margin: 0; }
 
 .composer textarea:focus { border-color: #21676a; outline: 2px solid #d9ef61; }
 
+.composer-actions { align-items: center; display: flex; flex-wrap: wrap; gap: 10px; margin-top: 10px; }
+
+.composer-actions label { color: #48585d; font-size: 14px; }
+
+.composer-actions select { background: #ffffff; border: 1px solid #a8b9ba; border-radius: 6px; color: #26363a; min-height: 38px; padding: 0 10px; }
+
 .composer button { background: #21676a; border: 0; border-radius: 6px; color: #ffffff; cursor: pointer; margin-top: 10px; min-height: 38px; padding: 0 20px; }
+
+.composer-actions button { margin-top: 0; }
 
 .composer button:disabled { cursor: wait; opacity: 0.65; }
 
@@ -463,4 +471,6 @@ h2 { font-size: 20px; margin: 0; }
   .custom-evaluation-item { align-items: flex-start; flex-direction: column; }
   .upload-form { align-items: stretch; grid-template-columns: 1fr; }
   .composer { padding: 14px 16px; }
+  .composer-actions { align-items: stretch; flex-direction: column; }
+  .composer-actions select, .composer-actions button { width: 100%; }
 }

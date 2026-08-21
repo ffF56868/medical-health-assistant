@@ -80,15 +80,29 @@ class KnowledgeDocumentRead(KnowledgeDocumentCreate):
     updated_at: datetime | None = None
 
 
+KNOWLEDGE_TYPES = {"all", "condition", "drug", "document"}
+
+
+def validate_knowledge_type(value: str) -> str:
+    normalized_value = strip_required_text(value)
+    if normalized_value not in KNOWLEDGE_TYPES:
+        raise ValueError("检索范围必须是 all、condition、drug 或 document")
+    return normalized_value
+
+
 class AskRequest(SQLModel):
     question: str = Field(min_length=1, max_length=1000)
     conversation_id: str = Field(default="default", min_length=1, max_length=100)
+    knowledge_type: str = Field(default="all", min_length=1, max_length=20)
 
     _strip_question = field_validator("question", mode="before")(
         strip_required_text
     )
     _strip_conversation_id = field_validator("conversation_id", mode="before")(
         strip_required_text
+    )
+    _validate_knowledge_type = field_validator("knowledge_type", mode="before")(
+        validate_knowledge_type
     )
 
 
@@ -111,6 +125,7 @@ class AskResponse(SQLModel):
     assistant_message_id: int
     references: list[ReferenceRead] = Field(default_factory=list)
     processing_path: str
+    retrieval_scope: str
     retrieved_count: int
     latency_ms: int
 

@@ -1,5 +1,6 @@
 const form = document.querySelector("#ask-form");
 const questionInput = document.querySelector("#question");
+const retrievalScopeSelect = document.querySelector("#retrieval-scope");
 const messageList = document.querySelector("#message-list");
 const sendButton = document.querySelector("#send-button");
 const newChatButton = document.querySelector("#new-chat");
@@ -222,17 +223,25 @@ function appendTrace(message, trace) {
     "vector-search-no-match": "未找到相关资料",
     "safety-keyword-guard": "安全拦截",
   };
+  const scopeLabels = {
+    all: "全部资料",
+    condition: "仅病症",
+    drug: "仅药物",
+    document: "仅健康资料",
+  };
   const traceSection = document.createElement("div");
   traceSection.className = "answer-trace";
   const title = document.createElement("span");
   title.textContent = "本次回答过程";
   const path = document.createElement("span");
   path.textContent = pathLabels[trace.processing_path] || "未知处理路径";
+  const scope = document.createElement("span");
+  scope.textContent = `范围：${scopeLabels[trace.retrieval_scope] || "全部资料"}`;
   const retrieved = document.createElement("span");
   retrieved.textContent = `命中 ${trace.retrieved_count || 0} 条资料`;
   const latency = document.createElement("span");
   latency.textContent = `耗时 ${trace.latency_ms || 0} ms`;
-  traceSection.append(title, path, retrieved, latency);
+  traceSection.append(title, path, scope, retrieved, latency);
   message.append(traceSection);
 }
 
@@ -1313,7 +1322,11 @@ async function requestStreamingAnswer(question) {
   const response = await fetch("/ask/stream", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ question, conversation_id: conversationId }),
+    body: JSON.stringify({
+      question,
+      conversation_id: conversationId,
+      knowledge_type: retrievalScopeSelect.value,
+    }),
   });
   if (!response.ok) {
     const data = await response.json();
