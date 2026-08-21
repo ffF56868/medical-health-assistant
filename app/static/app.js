@@ -1479,6 +1479,18 @@ function renderRebuildJobHistory(data) {
       error.textContent = `失败原因：${job.error_message}`;
       item.append(error);
     }
+    if (job.retry_of_job_id) {
+      const retrySource = document.createElement("p");
+      retrySource.textContent = `本任务重试自任务 #${job.retry_of_job_id}`;
+      item.append(retrySource);
+    }
+    if (job.status === "failed") {
+      const retryButton = document.createElement("button");
+      retryButton.type = "button";
+      retryButton.textContent = "重新执行";
+      retryButton.addEventListener("click", () => retryRebuildJob(job, retryButton));
+      item.append(retryButton);
+    }
     rebuildHistoryResults.append(item);
   }
 }
@@ -1498,6 +1510,29 @@ async function loadRebuildJobHistory() {
     rebuildHistoryStatus.textContent = `读取失败：${error.message}`;
   } finally {
     refreshRebuildHistoryButton.disabled = false;
+  }
+}
+
+async function retryRebuildJob(job, button) {
+  const confirmed = window.confirm(
+    `任务 #${job.id} 失败，确定重新生成全部资料的向量吗？这可能消耗 OpenAI Embedding 额度。`,
+  );
+  if (!confirmed) return;
+
+  button.disabled = true;
+  button.textContent = "正在创建重试任务...";
+  try {
+    const response = await fetch(`/knowledge/rebuild/jobs/${job.id}/retry`, {
+      method: "POST",
+    });
+    const data = await response.json();
+    if (!response.ok) throw new Error(getErrorMessage(data, "创建重试任务失败。"));
+    await Promise.all([watchRebuildJob(data.id), loadRebuildJobHistory()]);
+  } catch (error) {
+    rebuildHistoryStatus.className = "rebuild-history-status error";
+    rebuildHistoryStatus.textContent = `重试失败：${error.message}`;
+    button.disabled = false;
+    button.textContent = "重新执行";
   }
 }
 

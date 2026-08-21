@@ -43,6 +43,9 @@ SQLITE_COLUMN_MIGRATIONS = {
     "chatmessage": {
         "response_metadata_json": "TEXT NOT NULL DEFAULT '{}'",
     },
+    "knowledgerebuildjob": {
+        "retry_of_job_id": "INTEGER",
+    },
 }
 
 

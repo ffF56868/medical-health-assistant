@@ -1,3 +1,4 @@
+from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 
 from langchain_core.documents import Document
@@ -297,6 +298,30 @@ def test_existing_sqlite_data_receives_the_review_log_table():
     assert "knowledgereviewlog" in table_names
 
 
+def test_existing_rebuild_jobs_receive_retry_reference_column():
+    old_database = create_engine("sqlite://")
+    with old_database.begin() as connection:
+        connection.exec_driver_sql(
+            'CREATE TABLE "knowledgerebuildjob" ('
+            'id INTEGER PRIMARY KEY, status VARCHAR(20), '
+            'document_count INTEGER, chunk_count INTEGER, '
+            'error_message VARCHAR(2000), created_at DATETIME, '
+            'started_at DATETIME, completed_at DATETIME)'
+        )
+
+    create_db_and_tables(old_database)
+
+    with old_database.connect() as connection:
+        columns = {
+            row[1]
+            for row in connection.exec_driver_sql(
+                'PRAGMA table_info("knowledgerebuildjob")'
+            )
+        }
+
+    assert "retry_of_job_id" in columns
+
+
 def test_blank_knowledge_search_is_rejected(client):
     response = client.get("/knowledge/search", params={"q": " "})
     assert response.status_code == 422
@@ -561,6 +586,76 @@ def test_rebuild_job_history_lists_recent_jobs(client, test_engine):
     assert data["total_count"] == 2
     assert len(data["jobs"]) == 1
     assert data["jobs"][0]["status"] in {"completed", "failed"}
+
+
+def test_failed_rebuild_job_can_create_a_retry(client, test_engine, monkeypatch):
+    with Session(test_engine) as session:
+        failed_job = KnowledgeRebuildJob(
+            status="failed",
+            error_message="第一次失败",
+        )
+        session.add(failed_job)
+        session.commit()
+        session.refresh(failed_job)
+        failed_job_id = failed_job.id
+
+    def fake_run_rebuild_job(job_id):
+        with Session(test_engine) as session:
+            job = session.get(KnowledgeRebuildJob, job_id)
+            job.status = "completed"
+            job.document_count = 3
+            job.chunk_count = 7
+            session.add(job)
+            session.commit()
+
+    monkeypatch.setattr(knowledge_router, "run_rebuild_job", fake_run_rebuild_job)
+
+    response = client.post(f"/knowledge/rebuild/jobs/{failed_job_id}/retry")
+
+    assert response.status_code == 202
+    retry_job_id = response.json()["id"]
+    assert response.json()["status"] == "pending"
+    assert response.json()["retry_of_job_id"] == failed_job_id
+    retry_status = client.get(f"/knowledge/rebuild/jobs/{retry_job_id}")
+    assert retry_status.json()["status"] == "completed"
+    assert retry_status.json()["chunk_count"] == 7
+
+
+def test_completed_rebuild_job_cannot_be_retried(client, test_engine):
+    with Session(test_engine) as session:
+        job = KnowledgeRebuildJob(status="completed")
+        session.add(job)
+        session.commit()
+        session.refresh(job)
+        job_id = job.id
+
+    response = client.post(f"/knowledge/rebuild/jobs/{job_id}/retry")
+
+    assert response.status_code == 409
+    assert response.json()["detail"] == "只有失败的知识库重建任务可以重试"
+
+
+def test_stale_rebuild_job_is_marked_failed_and_can_be_seen(
+    client,
+    test_engine,
+    monkeypatch,
+):
+    monkeypatch.setattr(knowledge_router, "REBUILD_JOB_TIMEOUT_SECONDS", 60)
+    with Session(test_engine) as session:
+        job = KnowledgeRebuildJob(
+            status="running",
+            started_at=datetime.now(UTC) - timedelta(seconds=61),
+        )
+        session.add(job)
+        session.commit()
+        session.refresh(job)
+        job_id = job.id
+
+    response = client.get(f"/knowledge/rebuild/jobs/{job_id}")
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "failed"
+    assert "可能因服务重启中断" in response.json()["error_message"]
 
 
 def test_rag_evaluation_reports_hits_in_the_top_three(client, monkeypatch):

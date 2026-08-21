@@ -1,4 +1,5 @@
 from datetime import UTC, datetime
+import os
 from threading import Lock
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
@@ -42,6 +43,9 @@ from app.vector_store import get_knowledge_status, rebuild_vector_store
 router = APIRouter(prefix="/knowledge", tags=["knowledge"])
 
 ACTIVE_REBUILD_STATUSES = {"pending", "running"}
+REBUILD_JOB_TIMEOUT_SECONDS = int(
+    os.getenv("REBUILD_JOB_TIMEOUT_SECONDS", str(30 * 60))
+)
 rebuild_start_lock = Lock()
 rebuild_execution_lock = Lock()
 
@@ -120,6 +124,33 @@ def get_active_rebuild_job(session: Session) -> KnowledgeRebuildJob | None:
     ).first()
 
 
+def recover_stale_rebuild_jobs(session: Session) -> None:
+    """Mark jobs interrupted by a crash or an unusually long rebuild as failed."""
+    now = datetime.now(UTC)
+    stale_jobs = session.exec(
+        select(KnowledgeRebuildJob).where(
+            KnowledgeRebuildJob.status.in_(ACTIVE_REBUILD_STATUSES)
+        )
+    ).all()
+    changed = False
+    timeout_minutes = max(1, REBUILD_JOB_TIMEOUT_SECONDS // 60)
+    for job in stale_jobs:
+        reference_time = job.started_at or job.created_at
+        if reference_time.tzinfo is None:
+            reference_time = reference_time.replace(tzinfo=UTC)
+        if (now - reference_time).total_seconds() <= REBUILD_JOB_TIMEOUT_SECONDS:
+            continue
+        job.status = "failed"
+        job.error_message = (
+            f"任务超过 {timeout_minutes} 分钟未完成，可能因服务重启中断，请重试"
+        )
+        job.completed_at = now
+        session.add(job)
+        changed = True
+    if changed:
+        session.commit()
+
+
 def run_rebuild_job(job_id: int) -> None:
     """Run one rebuild outside the request and persist its final state."""
     with rebuild_execution_lock:
@@ -137,6 +168,9 @@ def run_rebuild_job(job_id: int) -> None:
                 create_knowledge_snapshot(session, "rebuild")
                 session.commit()
                 document_count, chunk_count = rebuild_vector_store(session)
+                session.refresh(job)
+                if job.status != "running":
+                    return
 
                 job.status = "completed"
                 job.document_count = document_count
@@ -166,6 +200,7 @@ def start_async_rebuild(
     session: Session = Depends(get_session),
 ):
     with rebuild_start_lock:
+        recover_stale_rebuild_jobs(session)
         active_job = get_active_rebuild_job(session)
         if active_job is not None:
             raise HTTPException(
@@ -186,6 +221,7 @@ def start_async_rebuild(
     response_model=KnowledgeRebuildJobRead | None,
 )
 def get_active_rebuild_job_status(session: Session = Depends(get_session)):
+    recover_stale_rebuild_jobs(session)
     job = get_active_rebuild_job(session)
     return job
 
@@ -198,6 +234,7 @@ def list_rebuild_jobs(
     limit: int = Query(default=20, ge=1, le=100),
     session: Session = Depends(get_session),
 ):
+    recover_stale_rebuild_jobs(session)
     jobs = session.exec(
         select(KnowledgeRebuildJob)
         .order_by(KnowledgeRebuildJob.created_at.desc(), KnowledgeRebuildJob.id.desc())
@@ -205,6 +242,41 @@ def list_rebuild_jobs(
     ).all()
     total_count = len(session.exec(select(KnowledgeRebuildJob)).all())
     return KnowledgeRebuildJobListResponse(total_count=total_count, jobs=jobs)
+
+
+@router.post(
+    "/rebuild/jobs/{job_id}/retry",
+    response_model=KnowledgeRebuildJobRead,
+    status_code=202,
+)
+def retry_rebuild_job(
+    job_id: int,
+    background_tasks: BackgroundTasks,
+    session: Session = Depends(get_session),
+):
+    with rebuild_start_lock:
+        recover_stale_rebuild_jobs(session)
+        source_job = session.get(KnowledgeRebuildJob, job_id)
+        if source_job is None:
+            raise HTTPException(status_code=404, detail="知识库重建任务不存在")
+        if source_job.status != "failed":
+            raise HTTPException(
+                status_code=409,
+                detail="只有失败的知识库重建任务可以重试",
+            )
+        active_job = get_active_rebuild_job(session)
+        if active_job is not None:
+            raise HTTPException(
+                status_code=409,
+                detail=f"已有知识库重建任务 #{active_job.id} 正在执行，请先查看它的状态",
+            )
+
+        retry_job = KnowledgeRebuildJob(retry_of_job_id=source_job.id)
+        session.add(retry_job)
+        session.commit()
+        session.refresh(retry_job)
+        background_tasks.add_task(run_rebuild_job, retry_job.id)
+        return retry_job
 
 
 @router.get(
@@ -215,6 +287,7 @@ def get_rebuild_job_status(
     job_id: int,
     session: Session = Depends(get_session),
 ):
+    recover_stale_rebuild_jobs(session)
     job = session.get(KnowledgeRebuildJob, job_id)
     if job is None:
         raise HTTPException(status_code=404, detail="知识库重建任务不存在")

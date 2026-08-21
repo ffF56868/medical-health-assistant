@@ -129,9 +129,12 @@ docker-compose.test.yml
 - `GET /knowledge/rebuild/jobs/{job_id}`：查询指定任务，状态有 `pending`（等待）、`running`（执行中）、`completed`（完成）、`failed`（失败）。
 - `GET /knowledge/rebuild/jobs/active`：查询当前是否有等待或执行中的任务，刷新页面后也能恢复显示。
 - `GET /knowledge/rebuild/jobs`：查看最近的重建任务历史，包括完成数量和失败原因。
+- `POST /knowledge/rebuild/jobs/{job_id}/retry`：只允许重试失败任务，会创建新的任务记录并保留原记录。
 - 同一时间只允许一个重建任务，重复点击会返回已有任务，前端会继续查看它。
 - 原来的 `POST /knowledge/rebuild` 同步接口仍然保留，主要用于兼容旧调用和测试。
 - 重建失败时会把错误摘要保存到任务记录，便于定位问题；不会把完整程序堆栈返回给页面。
+- 默认超过 30 分钟仍未完成的任务会被标记为失败，可能是服务重启或执行异常导致，页面可直接重新执行。
+- 可在 `.env` 中设置 `REBUILD_JOB_TIMEOUT_SECONDS` 调整超时时间，默认是 1800 秒。
 
 scripts/docker-up.sh
 - 常用启动脚本。

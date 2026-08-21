@@ -546,6 +546,7 @@ class KnowledgeRebuildResponse(SQLModel):
 
 class KnowledgeRebuildJobRead(SQLModel):
     id: int
+    retry_of_job_id: int | None = None
     status: str
     document_count: int
     chunk_count: int

@@ -79,6 +79,7 @@ class KnowledgeSnapshot(SQLModel, table=True):
 
 class KnowledgeRebuildJob(SQLModel, table=True):
     id: int | None = Field(default=None, primary_key=True)
+    retry_of_job_id: int | None = Field(default=None, index=True)
     status: str = Field(default="pending", max_length=20, index=True)
     document_count: int = 0
     chunk_count: int = 0
