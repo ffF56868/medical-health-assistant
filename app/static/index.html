@@ -185,6 +185,15 @@
               <label for="evaluation-alternative-names">同类型的可接受资料（可选）
                 <input id="evaluation-alternative-names" maxlength="1000" placeholder="多个名称用逗号分隔" />
               </label>
+              <label for="evaluation-category">评测分类
+                <select id="evaluation-category" required>
+                  <option value="自定义">自定义</option>
+                  <option value="症状相关">症状相关</option>
+                  <option value="用药信息">用药信息</option>
+                  <option value="生活方式">生活方式</option>
+                  <option value="紧急警示">紧急警示</option>
+                </select>
+              </label>
               <label for="evaluation-expected-type">资料类型
                 <select id="evaluation-expected-type" required>
                   <option value="condition">病症</option>
@@ -199,6 +208,7 @@
             <p class="evaluation-status" id="evaluation-status" aria-live="polite"></p>
             <div class="evaluation-metrics" id="evaluation-metrics"></div>
             <div class="evaluation-results" id="evaluation-results"></div>
+            <div class="evaluation-quality-gate" id="evaluation-quality-gate"></div>
             <section class="retrieval-comparison" aria-labelledby="retrieval-comparison-title">
               <h4 id="retrieval-comparison-title">新旧检索结果</h4>
               <p class="comparison-status" id="comparison-status" aria-live="polite"></p>

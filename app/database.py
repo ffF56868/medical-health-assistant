@@ -31,7 +31,11 @@ SQLITE_COLUMN_MIGRATIONS = {
         "updated_at": "DATETIME",
     },
     "ragevaluationcase": {
+        "category": "VARCHAR(50) NOT NULL DEFAULT '自定义'",
         "alternative_names_json": "TEXT NOT NULL DEFAULT '[]'",
+    },
+    "ragevaluationrun": {
+        "results_json": "TEXT NOT NULL DEFAULT '[]'",
     },
 }
 

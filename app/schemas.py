@@ -220,6 +220,7 @@ class RAGEvaluationCaseResult(SQLModel):
     question: str
     expected_name: str
     expected_type: str
+    category: str
     alternative_names: list[str] = Field(default_factory=list)
     passed: bool
     expected_rank: int | None = None
@@ -244,6 +245,7 @@ class RetrievalComparisonCaseResult(SQLModel):
     question: str
     expected_name: str
     expected_type: str
+    category: str
     alternative_names: list[str] = Field(default_factory=list)
     baseline: RetrievalStrategyResult
     current: RetrievalStrategyResult
@@ -281,6 +283,7 @@ class RetrievalDiagnosticCaseResult(SQLModel):
     question: str
     expected_name: str
     expected_type: str
+    category: str
     alternative_names: list[str] = Field(default_factory=list)
     passed: bool
     expected_rank: int | None = None
@@ -299,6 +302,21 @@ class RetrievalDiagnosticResponse(SQLModel):
     results: list[RetrievalDiagnosticCaseResult] = Field(default_factory=list)
 
 
+class RAGEvaluationCategoryMetric(SQLModel):
+    category: str
+    total_count: int
+    passed_count: int
+    pass_rate: float
+
+
+class RAGEvaluationQualityGate(SQLModel):
+    status: str
+    compared_history_id: int | None = None
+    message: str
+    regressed_questions: list[str] = Field(default_factory=list)
+    improved_questions: list[str] = Field(default_factory=list)
+
+
 class RAGEvaluationResponse(SQLModel):
     history_id: int
     total_count: int
@@ -306,6 +324,8 @@ class RAGEvaluationResponse(SQLModel):
     pass_rate: float
     preset_count: int
     custom_count: int
+    category_metrics: list[RAGEvaluationCategoryMetric] = Field(default_factory=list)
+    quality_gate: RAGEvaluationQualityGate
     results: list[RAGEvaluationCaseResult] = Field(default_factory=list)
 
 
@@ -357,6 +377,7 @@ class RAGEvaluationCaseCreate(SQLModel):
     question: str = Field(min_length=1, max_length=1000)
     expected_name: str = Field(min_length=1, max_length=200)
     expected_type: str = Field(min_length=1, max_length=20)
+    category: str = Field(default="自定义", min_length=1, max_length=50)
     alternative_names: list[str] = Field(default_factory=list)
 
     _strip_question = field_validator("question", mode="before")(strip_required_text)
@@ -366,6 +387,7 @@ class RAGEvaluationCaseCreate(SQLModel):
     _validate_expected_type = field_validator("expected_type", mode="before")(
         validate_evaluation_expected_type
     )
+    _strip_category = field_validator("category", mode="before")(strip_required_text)
     _normalize_alternative_names = field_validator(
         "alternative_names", mode="before"
     )(normalize_alternative_names)

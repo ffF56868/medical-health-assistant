@@ -42,6 +42,7 @@ const diagnoseRetrievalButton = document.querySelector("#diagnose-retrieval");
 const evaluationStatus = document.querySelector("#evaluation-status");
 const evaluationMetrics = document.querySelector("#evaluation-metrics");
 const evaluationResults = document.querySelector("#evaluation-results");
+const evaluationQualityGate = document.querySelector("#evaluation-quality-gate");
 const refreshEvaluationHistoryButton = document.querySelector("#refresh-evaluation-history");
 const evaluationHistoryStatus = document.querySelector("#evaluation-history-status");
 const evaluationHistoryList = document.querySelector("#evaluation-history-list");
@@ -49,6 +50,7 @@ const customEvaluationForm = document.querySelector("#custom-evaluation-form");
 const customEvaluationQuestion = document.querySelector("#evaluation-question");
 const customEvaluationExpectedName = document.querySelector("#evaluation-expected-name");
 const customEvaluationAlternativeNames = document.querySelector("#evaluation-alternative-names");
+const customEvaluationCategory = document.querySelector("#evaluation-category");
 const customEvaluationExpectedType = document.querySelector("#evaluation-expected-type");
 const customEvaluationStatus = document.querySelector("#custom-evaluation-status");
 const customEvaluationList = document.querySelector("#custom-evaluation-list");
@@ -560,6 +562,12 @@ function renderRagEvaluation(data) {
     metric.textContent = `${label}：${value}`;
     evaluationMetrics.append(metric);
   }
+  for (const metricData of data.category_metrics) {
+    const metric = document.createElement("div");
+    metric.className = "evaluation-metric";
+    metric.textContent = `${metricData.category}：${metricData.passed_count} / ${metricData.total_count}`;
+    evaluationMetrics.append(metric);
+  }
 
   evaluationResults.innerHTML = "";
   for (const result of data.results) {
@@ -583,6 +591,35 @@ function renderRagEvaluation(data) {
     }
     item.append(title, detail);
     evaluationResults.append(item);
+  }
+  renderEvaluationQualityGate(data.quality_gate);
+}
+
+function renderEvaluationQualityGate(gate) {
+  evaluationQualityGate.innerHTML = "";
+  if (!gate) return;
+
+  evaluationQualityGate.className = `evaluation-quality-gate ${gate.status}`;
+  const title = document.createElement("strong");
+  title.textContent = ({
+    baseline: "质量基线",
+    stable: "质量检查通过",
+    improved: "质量有所提升",
+    warning: "发现能力回退",
+  })[gate.status] || "质量检查";
+  const message = document.createElement("p");
+  message.textContent = gate.message;
+  evaluationQualityGate.append(title, message);
+
+  if (gate.regressed_questions.length) {
+    const regressions = document.createElement("p");
+    regressions.textContent = `回退题：${gate.regressed_questions.join("；")}`;
+    evaluationQualityGate.append(regressions);
+  }
+  if (gate.improved_questions.length) {
+    const improvements = document.createElement("p");
+    improvements.textContent = `提升题：${gate.improved_questions.join("；")}`;
+    evaluationQualityGate.append(improvements);
   }
 }
 
@@ -682,7 +719,7 @@ function renderCustomEvaluationCases(data) {
     const alternatives = item.alternative_names.length
       ? `｜可接受：${item.alternative_names.join("、")}`
       : "";
-    text.textContent = `问题：${item.question}｜目标${getKnowledgeTypeLabel(item.expected_type)}：${item.expected_name}${alternatives}`;
+    text.textContent = `问题：${item.question}｜分类：${item.category}｜目标${getKnowledgeTypeLabel(item.expected_type)}：${item.expected_name}${alternatives}`;
     const removeButton = document.createElement("button");
     removeButton.className = "text-button danger-button";
     removeButton.type = "button";
@@ -753,6 +790,7 @@ async function addCustomEvaluationCase(event) {
   const payload = {
     question: customEvaluationQuestion.value,
     expected_name: customEvaluationExpectedName.value,
+    category: customEvaluationCategory.value,
     alternative_names: [...new Set(
       customEvaluationAlternativeNames.value
         .split(/[，,、]/)
@@ -804,6 +842,7 @@ async function runRagEvaluation() {
   evaluationStatus.textContent = "正在检查前 3 条检索结果...";
   evaluationMetrics.innerHTML = "";
   evaluationResults.innerHTML = "";
+  evaluationQualityGate.innerHTML = "";
   try {
     const response = await fetch("/evaluation/run", { method: "POST" });
     const data = await response.json();

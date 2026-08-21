@@ -10,8 +10,10 @@ from app.schemas import (
     RAGEvaluationCaseListResponse,
     RAGEvaluationCaseRead,
     RAGEvaluationCaseResult,
+    RAGEvaluationCategoryMetric,
     RAGEvaluationHistoryRead,
     RAGEvaluationHistoryResponse,
+    RAGEvaluationQualityGate,
     RAGEvaluationResponse,
     RetrievalDiagnosticCandidate,
     RetrievalDiagnosticCaseResult,
@@ -41,6 +43,7 @@ EVALUATION_CASES = (
         "question": "布洛芬有什么作用？",
         "expected_name": "布洛芬",
         "expected_type": "drug",
+        "category": "用药信息",
         "case_source": "默认题",
     },
     {
@@ -48,6 +51,7 @@ EVALUATION_CASES = (
         "question": "睡眠不足时有哪些通用健康建议？",
         "expected_name": "睡眠健康提示",
         "expected_type": "document",
+        "category": "生活方式",
         "case_source": "默认题",
     },
     {
@@ -55,6 +59,7 @@ EVALUATION_CASES = (
         "question": "鼻塞、流鼻涕和打喷嚏的相关资料是什么？",
         "expected_name": "普通感冒",
         "expected_type": "condition",
+        "category": "症状相关",
         "alternative_names": ["过敏性鼻炎"],
         "case_source": "默认题",
     },
@@ -63,6 +68,7 @@ EVALUATION_CASES = (
         "question": "呼吸困难或持续胸痛时有哪些警示信号？",
         "expected_name": "需要及时就医的警示信号",
         "expected_type": "document",
+        "category": "紧急警示",
         "case_source": "默认题",
     },
 )
@@ -73,6 +79,18 @@ def get_alternative_names(case: dict) -> list[str]:
     if not isinstance(raw_names, list):
         return []
     return [name for name in raw_names if isinstance(name, str)]
+
+
+def get_case_category(case: dict) -> str:
+    category = case.get("category")
+    return category.strip() if isinstance(category, str) and category.strip() else "未分类"
+
+
+def normalize_evaluation_case(case: dict) -> dict:
+    normalized_case = dict(case)
+    normalized_case["category"] = get_case_category(case)
+    normalized_case["alternative_names"] = get_alternative_names(case)
+    return normalized_case
 
 
 def get_acceptable_names(case: dict) -> set[str]:
@@ -275,12 +293,123 @@ def get_record_alternative_names(record: RAGEvaluationCase) -> list[str]:
     return parsed_names if isinstance(parsed_names, list) else []
 
 
+def get_run_result_snapshot(run: RAGEvaluationRun) -> list[dict]:
+    try:
+        snapshot = json.loads(run.results_json)
+    except (json.JSONDecodeError, TypeError):
+        return []
+    return snapshot if isinstance(snapshot, list) else []
+
+
+def get_latest_result_snapshot(
+    session: Session,
+) -> tuple[RAGEvaluationRun | None, list[dict]]:
+    runs = session.exec(
+        select(RAGEvaluationRun).order_by(RAGEvaluationRun.created_at.desc())
+    ).all()
+    for run in runs:
+        snapshot = get_run_result_snapshot(run)
+        if snapshot:
+            return run, snapshot
+    return None, []
+
+
+def build_result_snapshot(results: list[RAGEvaluationCaseResult]) -> list[dict]:
+    return [
+        {
+            "case_id": result.case_id,
+            "question": result.question,
+            "category": result.category,
+            "passed": result.passed,
+        }
+        for result in results
+    ]
+
+
+def build_category_metrics(
+    results: list[RAGEvaluationCaseResult],
+) -> list[RAGEvaluationCategoryMetric]:
+    totals: dict[str, int] = {}
+    passed_counts: dict[str, int] = {}
+    for result in results:
+        category = result.category
+        totals[category] = totals.get(category, 0) + 1
+        passed_counts[category] = passed_counts.get(category, 0) + int(result.passed)
+
+    return [
+        RAGEvaluationCategoryMetric(
+            category=category,
+            total_count=total,
+            passed_count=passed_counts[category],
+            pass_rate=passed_counts[category] / total,
+        )
+        for category, total in totals.items()
+    ]
+
+
+def build_quality_gate(
+    results: list[RAGEvaluationCaseResult],
+    previous_run: RAGEvaluationRun | None,
+    previous_snapshot: list[dict],
+) -> RAGEvaluationQualityGate:
+    if previous_run is None:
+        return RAGEvaluationQualityGate(
+            status="baseline",
+            message="已保存本次评测明细，下一次运行时将自动检查检索能力是否回退。",
+        )
+
+    previous_results = {
+        item.get("case_id"): item
+        for item in previous_snapshot
+        if isinstance(item, dict) and isinstance(item.get("case_id"), str)
+    }
+    regressed_questions: list[str] = []
+    improved_questions: list[str] = []
+    for result in results:
+        previous_result = previous_results.get(result.case_id)
+        if previous_result is None:
+            continue
+        previous_passed = previous_result.get("passed")
+        if previous_passed is True and not result.passed:
+            regressed_questions.append(result.question)
+        elif previous_passed is False and result.passed:
+            improved_questions.append(result.question)
+
+    if regressed_questions:
+        return RAGEvaluationQualityGate(
+            status="warning",
+            compared_history_id=previous_run.id,
+            message=(
+                f"发现 {len(regressed_questions)} 道题从通过变为未通过，"
+                "建议检查本次知识库或检索改动。"
+            ),
+            regressed_questions=regressed_questions,
+            improved_questions=improved_questions,
+        )
+    if improved_questions:
+        return RAGEvaluationQualityGate(
+            status="improved",
+            compared_history_id=previous_run.id,
+            message=(
+                f"本次有 {len(improved_questions)} 道题从未通过变为通过，"
+                "且没有发现回退。"
+            ),
+            improved_questions=improved_questions,
+        )
+    return RAGEvaluationQualityGate(
+        status="stable",
+        compared_history_id=previous_run.id,
+        message="与上一次保存的评测明细相比，没有发现通过状态回退。",
+    )
+
+
 def serialize_evaluation_case(record: RAGEvaluationCase) -> RAGEvaluationCaseRead:
     return RAGEvaluationCaseRead(
         id=record.id,
         question=record.question,
         expected_name=record.expected_name,
         expected_type=record.expected_type,
+        category=record.category,
         alternative_names=get_record_alternative_names(record),
         created_at=record.created_at,
     )
@@ -293,6 +422,7 @@ def build_custom_case(record: RAGEvaluationCase) -> dict:
         "question": record.question,
         "expected_name": record.expected_name,
         "expected_type": record.expected_type,
+        "category": record.category,
         "alternative_names": get_record_alternative_names(record),
     }
 
@@ -301,9 +431,11 @@ def get_evaluation_cases(session: Session) -> tuple[list[dict], int]:
     custom_cases = session.exec(
         select(RAGEvaluationCase).order_by(RAGEvaluationCase.created_at)
     ).all()
-    return [*EVALUATION_CASES, *(build_custom_case(case) for case in custom_cases)], len(
-        custom_cases
-    )
+    cases = [
+        *(normalize_evaluation_case(case) for case in EVALUATION_CASES),
+        *(normalize_evaluation_case(build_custom_case(case)) for case in custom_cases),
+    ]
+    return cases, len(custom_cases)
 
 
 @router.get("/cases", response_model=RAGEvaluationCaseListResponse)
@@ -388,6 +520,8 @@ def run_rag_evaluation(session: Session = Depends(get_session)):
     total_count = len(results)
     pass_rate = passed_count / total_count if total_count else 0
     knowledge_index = session.get(KnowledgeIndexState, 1)
+    previous_run, previous_snapshot = get_latest_result_snapshot(session)
+    quality_gate = build_quality_gate(results, previous_run, previous_snapshot)
     run = RAGEvaluationRun(
         total_count=total_count,
         passed_count=passed_count,
@@ -396,6 +530,7 @@ def run_rag_evaluation(session: Session = Depends(get_session)):
         custom_count=custom_count,
         knowledge_document_count=knowledge_status.get("document_count", 0),
         knowledge_hash=knowledge_index.content_hash if knowledge_index else None,
+        results_json=json.dumps(build_result_snapshot(results), ensure_ascii=False),
     )
     session.add(run)
     session.commit()
@@ -407,6 +542,8 @@ def run_rag_evaluation(session: Session = Depends(get_session)):
         pass_rate=pass_rate,
         preset_count=len(EVALUATION_CASES),
         custom_count=custom_count,
+        category_metrics=build_category_metrics(results),
+        quality_gate=quality_gate,
         results=results,
     )
 

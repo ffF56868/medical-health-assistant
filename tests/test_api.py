@@ -156,11 +156,40 @@ def test_existing_sqlite_evaluation_cases_receive_alternative_names_column():
             )
         }
         migrated_row = connection.exec_driver_sql(
-            'SELECT alternative_names_json FROM "ragevaluationcase" WHERE id = 1'
+            'SELECT category, alternative_names_json '
+            'FROM "ragevaluationcase" WHERE id = 1'
         ).one()
 
-    assert "alternative_names_json" in columns
+    assert {"category", "alternative_names_json"}.issubset(columns)
+    assert migrated_row.category == "自定义"
     assert migrated_row.alternative_names_json == "[]"
+
+
+def test_existing_sqlite_evaluation_runs_receive_result_snapshot_column():
+    old_database = create_engine("sqlite://")
+    with old_database.begin() as connection:
+        connection.exec_driver_sql(
+            'CREATE TABLE "ragevaluationrun" ('
+            'id INTEGER PRIMARY KEY, total_count INTEGER, passed_count INTEGER, '
+            'pass_rate FLOAT, preset_count INTEGER, custom_count INTEGER, '
+            'knowledge_document_count INTEGER, knowledge_hash VARCHAR(64), '
+            'created_at DATETIME)'
+        )
+        connection.exec_driver_sql(
+            "INSERT INTO \"ragevaluationrun\" "
+            "(id, total_count, passed_count, pass_rate, preset_count, custom_count, "
+            "knowledge_document_count, created_at) "
+            "VALUES (1, 1, 1, 1, 1, 0, 1, CURRENT_TIMESTAMP)"
+        )
+
+    create_db_and_tables(old_database)
+
+    with old_database.connect() as connection:
+        migrated_row = connection.exec_driver_sql(
+            'SELECT results_json FROM "ragevaluationrun" WHERE id = 1'
+        ).one()
+
+    assert migrated_row.results_json == "[]"
 
 
 def test_blank_knowledge_search_is_rejected(client):
@@ -280,6 +309,13 @@ def test_rag_evaluation_reports_hits_in_the_top_three(client, monkeypatch):
     assert data["pass_rate"] == 1
     assert all(item["expected_rank"] == 1 for item in data["results"])
     assert all(k == 8 for _, k in vector_store.queries)
+    assert data["quality_gate"]["status"] == "baseline"
+    assert {metric["category"] for metric in data["category_metrics"]} == {
+        "用药信息",
+        "生活方式",
+        "症状相关",
+        "紧急警示",
+    }
 
 
 def test_rag_evaluation_accepts_an_alternative_target_name(client, monkeypatch):
@@ -289,6 +325,7 @@ def test_rag_evaluation_accepts_an_alternative_target_name(client, monkeypatch):
         "question": "症状重叠时的相关资料是什么？",
         "expected_name": "普通感冒",
         "expected_type": "condition",
+        "category": "症状相关",
         "alternative_names": ["过敏性鼻炎"],
     }
     vector_store = FakeComparisonVectorStore(
@@ -321,6 +358,55 @@ def test_rag_evaluation_accepts_an_alternative_target_name(client, monkeypatch):
     assert result["passed"] is True
     assert result["expected_rank"] == 1
     assert result["matched_name"] == "过敏性鼻炎"
+
+
+def test_rag_evaluation_warns_when_a_previous_hit_regresses(client, monkeypatch):
+    case = {
+        "case_id": "regression-case",
+        "case_source": "默认题",
+        "question": "目标资料在哪里？",
+        "expected_name": "目标资料",
+        "expected_type": "document",
+        "category": "检索回归测试",
+    }
+    vector_store = FakeComparisonVectorStore(
+        [
+            (
+                Document(
+                    page_content="目标资料内容",
+                    metadata={"name": "目标资料", "type": "document", "record_id": 1},
+                ),
+                0.9,
+            )
+        ]
+    )
+    monkeypatch.setattr(evaluation_router, "EVALUATION_CASES", (case,))
+    monkeypatch.setattr(
+        evaluation_router,
+        "get_knowledge_status",
+        lambda session: {"is_current": True},
+    )
+    monkeypatch.setattr(evaluation_router, "get_vector_store", lambda: vector_store)
+
+    first_response = client.post("/evaluation/run")
+    assert first_response.status_code == 200
+    assert first_response.json()["quality_gate"]["status"] == "baseline"
+
+    vector_store.matches = [
+        (
+            Document(
+                page_content="其他资料内容",
+                metadata={"name": "其他资料", "type": "document", "record_id": 2},
+            ),
+            0.9,
+        )
+    ]
+    second_response = client.post("/evaluation/run")
+
+    assert second_response.status_code == 200
+    quality_gate = second_response.json()["quality_gate"]
+    assert quality_gate["status"] == "warning"
+    assert quality_gate["regressed_questions"] == ["目标资料在哪里？"]
 
 
 def test_retrieval_comparison_reports_deduplication_improvement(client, monkeypatch):
@@ -525,6 +611,7 @@ def test_custom_evaluation_cases_can_be_created_listed_and_deleted(client):
             "question": "布洛芬有什么作用？",
             "expected_name": "布洛芬",
             "expected_type": "drug",
+            "category": "用药信息",
             "alternative_names": ["布洛芬缓释胶囊", "布洛芬"],
         },
     )
@@ -532,12 +619,14 @@ def test_custom_evaluation_cases_can_be_created_listed_and_deleted(client):
     assert created.status_code == 201
     case_id = created.json()["id"]
     assert created.json()["expected_type"] == "drug"
+    assert created.json()["category"] == "用药信息"
     assert created.json()["alternative_names"] == ["布洛芬缓释胶囊", "布洛芬"]
 
     listed = client.get("/evaluation/cases")
     assert listed.status_code == 200
     assert listed.json()["total_count"] == 1
     assert listed.json()["cases"][0]["id"] == case_id
+    assert listed.json()["cases"][0]["category"] == "用药信息"
     assert listed.json()["cases"][0]["alternative_names"] == ["布洛芬缓释胶囊", "布洛芬"]
 
     deleted = client.delete(f"/evaluation/cases/{case_id}")
