@@ -5,7 +5,7 @@ from sqlmodel import Session, create_engine, select
 
 from app.database import create_db_and_tables
 from app.main import health_check
-from app.models import KnowledgeDocument
+from app.models import KnowledgeDocument, KnowledgeRebuildJob
 from app.routers import ask as ask_router
 from app.routers import evaluation as evaluation_router
 from app.routers import knowledge as knowledge_router
@@ -469,6 +469,72 @@ def test_knowledge_versions_can_restore_a_previous_snapshot(client, monkeypatch)
         if version["id"] == first_version_id
     )
     assert restored_version["is_current"] is True
+
+
+def test_async_rebuild_returns_job_and_can_query_completed_status(
+    client,
+    test_engine,
+    monkeypatch,
+):
+    def fake_run_rebuild_job(job_id):
+        with Session(test_engine) as session:
+            job = session.get(KnowledgeRebuildJob, job_id)
+            job.status = "completed"
+            job.document_count = 2
+            job.chunk_count = 5
+            session.add(job)
+            session.commit()
+
+    monkeypatch.setattr(knowledge_router, "run_rebuild_job", fake_run_rebuild_job)
+
+    response = client.post("/knowledge/rebuild/async")
+
+    assert response.status_code == 202
+    job_id = response.json()["id"]
+    assert response.json()["status"] == "pending"
+
+    status_response = client.get(f"/knowledge/rebuild/jobs/{job_id}")
+    assert status_response.status_code == 200
+    assert status_response.json()["document_count"] == 2
+    assert status_response.json()["chunk_count"] == 5
+    assert client.get("/knowledge/rebuild/jobs/active").json() is None
+
+
+def test_async_rebuild_rejects_a_second_active_job(client, test_engine):
+    with Session(test_engine) as session:
+        active_job = KnowledgeRebuildJob(status="running")
+        session.add(active_job)
+        session.commit()
+        session.refresh(active_job)
+
+    response = client.post("/knowledge/rebuild/async")
+
+    assert response.status_code == 409
+    assert str(active_job.id) in response.json()["detail"]
+
+
+def test_rebuild_job_records_failure(test_engine, monkeypatch):
+    with Session(test_engine) as session:
+        job = KnowledgeRebuildJob()
+        session.add(job)
+        session.commit()
+        session.refresh(job)
+        job_id = job.id
+
+    monkeypatch.setattr(knowledge_router, "engine", test_engine)
+    monkeypatch.setattr(
+        knowledge_router,
+        "rebuild_vector_store",
+        lambda session: (_ for _ in ()).throw(RuntimeError("测试向量服务不可用")),
+    )
+
+    knowledge_router.run_rebuild_job(job_id)
+
+    with Session(test_engine) as session:
+        failed_job = session.get(KnowledgeRebuildJob, job_id)
+        assert failed_job.status == "failed"
+        assert failed_job.error_message == "测试向量服务不可用"
+        assert failed_job.completed_at is not None
 
 
 def test_rag_evaluation_reports_hits_in_the_top_three(client, monkeypatch):

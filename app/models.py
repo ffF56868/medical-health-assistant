@@ -77,6 +77,20 @@ class KnowledgeSnapshot(SQLModel, table=True):
     )
 
 
+class KnowledgeRebuildJob(SQLModel, table=True):
+    id: int | None = Field(default=None, primary_key=True)
+    status: str = Field(default="pending", max_length=20, index=True)
+    document_count: int = 0
+    chunk_count: int = 0
+    error_message: str | None = Field(default=None, max_length=2000)
+    created_at: datetime = Field(
+        default_factory=lambda: datetime.now(UTC),
+        index=True,
+    )
+    started_at: datetime | None = None
+    completed_at: datetime | None = None
+
+
 class KnowledgeReviewLog(SQLModel, table=True):
     id: int | None = Field(default=None, primary_key=True)
     record_type: str = Field(max_length=20, index=True)

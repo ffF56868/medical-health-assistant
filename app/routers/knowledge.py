@@ -1,9 +1,10 @@
 from datetime import UTC, datetime
+from threading import Lock
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
 from sqlmodel import Session, select
 
-from app.database import get_session
+from app.database import engine, get_session
 from app.knowledge_versions import (
     create_knowledge_snapshot,
     get_current_snapshot_hash,
@@ -13,11 +14,13 @@ from app.models import (
     Condition,
     Drug,
     KnowledgeDocument,
+    KnowledgeRebuildJob,
     KnowledgeReviewLog,
     KnowledgeSnapshot,
 )
 from app.schemas import (
     KnowledgeRebuildResponse,
+    KnowledgeRebuildJobRead,
     KnowledgeReviewBatchUpdate,
     KnowledgeReviewBatchUpdateResponse,
     KnowledgeReviewLogRead,
@@ -36,6 +39,10 @@ from app.vector_store import get_knowledge_status, rebuild_vector_store
 
 
 router = APIRouter(prefix="/knowledge", tags=["knowledge"])
+
+ACTIVE_REBUILD_STATUSES = {"pending", "running"}
+rebuild_start_lock = Lock()
+rebuild_execution_lock = Lock()
 
 
 def find_matching_fields(query: str, fields: dict[str, str]) -> list[str]:
@@ -102,6 +109,98 @@ def rebuild_knowledge(session: Session = Depends(get_session)):
         snapshot_id=snapshot.id,
         snapshot_created=snapshot_created,
     )
+
+
+def get_active_rebuild_job(session: Session) -> KnowledgeRebuildJob | None:
+    return session.exec(
+        select(KnowledgeRebuildJob)
+        .where(KnowledgeRebuildJob.status.in_(ACTIVE_REBUILD_STATUSES))
+        .order_by(KnowledgeRebuildJob.created_at.desc())
+    ).first()
+
+
+def run_rebuild_job(job_id: int) -> None:
+    """Run one rebuild outside the request and persist its final state."""
+    with rebuild_execution_lock:
+        with Session(engine) as session:
+            job = session.get(KnowledgeRebuildJob, job_id)
+            if job is None or job.status not in ACTIVE_REBUILD_STATUSES:
+                return
+
+            job.status = "running"
+            job.started_at = datetime.now(UTC)
+            session.add(job)
+            session.commit()
+
+            try:
+                create_knowledge_snapshot(session, "rebuild")
+                session.commit()
+                document_count, chunk_count = rebuild_vector_store(session)
+
+                job.status = "completed"
+                job.document_count = document_count
+                job.chunk_count = chunk_count
+                job.completed_at = datetime.now(UTC)
+                session.add(job)
+                session.commit()
+            except Exception as error:
+                session.rollback()
+                with Session(engine) as failed_session:
+                    failed_job = failed_session.get(KnowledgeRebuildJob, job_id)
+                    if failed_job is not None:
+                        failed_job.status = "failed"
+                        failed_job.error_message = str(error)[:2000]
+                        failed_job.completed_at = datetime.now(UTC)
+                        failed_session.add(failed_job)
+                        failed_session.commit()
+
+
+@router.post(
+    "/rebuild/async",
+    response_model=KnowledgeRebuildJobRead,
+    status_code=202,
+)
+def start_async_rebuild(
+    background_tasks: BackgroundTasks,
+    session: Session = Depends(get_session),
+):
+    with rebuild_start_lock:
+        active_job = get_active_rebuild_job(session)
+        if active_job is not None:
+            raise HTTPException(
+                status_code=409,
+                detail=f"已有知识库重建任务 #{active_job.id} 正在执行，请先查看它的状态",
+            )
+
+        job = KnowledgeRebuildJob()
+        session.add(job)
+        session.commit()
+        session.refresh(job)
+        background_tasks.add_task(run_rebuild_job, job.id)
+        return job
+
+
+@router.get(
+    "/rebuild/jobs/active",
+    response_model=KnowledgeRebuildJobRead | None,
+)
+def get_active_rebuild_job_status(session: Session = Depends(get_session)):
+    job = get_active_rebuild_job(session)
+    return job
+
+
+@router.get(
+    "/rebuild/jobs/{job_id}",
+    response_model=KnowledgeRebuildJobRead,
+)
+def get_rebuild_job_status(
+    job_id: int,
+    session: Session = Depends(get_session),
+):
+    job = session.get(KnowledgeRebuildJob, job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="知识库重建任务不存在")
+    return job
 
 
 @router.get("/versions", response_model=KnowledgeVersionListResponse)

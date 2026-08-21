@@ -123,6 +123,15 @@ docker-compose.test.yml
 - 最多 20 个文件，单个文件不超过 200KB，批量总大小不超过 2MB。
 - 导入成功后知识库状态会变成“待重建”，点击“重建知识库”后才会更新 Chroma。
 
+后台重建知识库
+- 页面点击“重建知识库”后，默认使用异步接口，不会让页面一直等待。
+- `POST /knowledge/rebuild/async`：创建重建任务，返回任务编号，状态码是 202。
+- `GET /knowledge/rebuild/jobs/{job_id}`：查询指定任务，状态有 `pending`（等待）、`running`（执行中）、`completed`（完成）、`failed`（失败）。
+- `GET /knowledge/rebuild/jobs/active`：查询当前是否有等待或执行中的任务，刷新页面后也能恢复显示。
+- 同一时间只允许一个重建任务，重复点击会返回已有任务，前端会继续查看它。
+- 原来的 `POST /knowledge/rebuild` 同步接口仍然保留，主要用于兼容旧调用和测试。
+- 重建失败时会把错误摘要保存到任务记录，便于定位问题；不会把完整程序堆栈返回给页面。
+
 scripts/docker-up.sh
 - 常用启动脚本。
 - 处理 WSL 代理、构建镜像、首次迁移旧数据、启动容器。

@@ -74,6 +74,8 @@ const diagnosisStatus = document.querySelector("#diagnosis-status");
 const diagnosisMetrics = document.querySelector("#diagnosis-metrics");
 const diagnosisResults = document.querySelector("#diagnosis-results");
 
+let rebuildPolling = false;
+
 const SOURCE_TIER_OPTIONS = [
   ["authority", "权威机构"],
   ["professional", "专业机构"],
@@ -575,6 +577,12 @@ function showKnowledgeStatus(data) {
 
 async function loadKnowledgeStatus() {
   try {
+    const activeJob = await getActiveRebuildJob();
+    if (activeJob) {
+      showRebuildJob(activeJob);
+      await watchRebuildJob(activeJob.id);
+      return;
+    }
     showKnowledgeStatus(await getKnowledgeStatusData());
   } catch (error) {
     knowledgeStatus.className = "knowledge-status error";
@@ -589,6 +597,71 @@ async function getKnowledgeStatusData() {
   return data;
 }
 
+async function getActiveRebuildJob() {
+  const response = await fetch("/knowledge/rebuild/jobs/active");
+  const data = await response.json();
+  if (!response.ok) throw new Error(getErrorMessage(data, "读取重建任务失败"));
+  return data;
+}
+
+async function getRebuildJob(jobId) {
+  const response = await fetch(`/knowledge/rebuild/jobs/${jobId}`);
+  const data = await response.json();
+  if (!response.ok) throw new Error(getErrorMessage(data, "读取重建任务失败"));
+  return data;
+}
+
+function showRebuildJob(job) {
+  const statusLabels = {
+    pending: "等待开始",
+    running: "正在生成向量",
+    completed: "重建完成",
+    failed: "重建失败",
+  };
+  const statusLabel = statusLabels[job.status] || job.status;
+  knowledgeStatus.className = "knowledge-status";
+  if (job.status === "failed") knowledgeStatus.classList.add("error");
+  if (job.status === "pending" || job.status === "running") {
+    knowledgeStatus.classList.add("outdated");
+  }
+  knowledgeStatus.textContent = `任务 #${job.id}：${statusLabel}`;
+  if (job.status === "completed") {
+    knowledgeStatus.textContent += `，${job.document_count} 份资料，${job.chunk_count} 个切块`;
+  }
+  if (job.status === "failed" && job.error_message) {
+    knowledgeStatus.textContent += `：${job.error_message}`;
+  }
+}
+
+function wait(milliseconds) {
+  return new Promise((resolve) => window.setTimeout(resolve, milliseconds));
+}
+
+async function watchRebuildJob(jobId) {
+  if (rebuildPolling) return;
+  rebuildPolling = true;
+  rebuildKnowledgeButton.disabled = true;
+  try {
+    while (true) {
+      const job = await getRebuildJob(jobId);
+      showRebuildJob(job);
+      if (job.status === "completed") {
+        await loadKnowledgeStatus();
+        await loadKnowledgeVersions();
+        return;
+      }
+      if (job.status === "failed") {
+        throw new Error(job.error_message || "后台重建失败");
+      }
+      await wait(1000);
+    }
+  } finally {
+    rebuildPolling = false;
+    rebuildKnowledgeButton.disabled = false;
+    rebuildKnowledgeButton.textContent = "重建知识库";
+  }
+}
+
 async function rebuildKnowledge() {
   const confirmed = window.confirm(
     "重建会重新为全部资料生成向量，可能消耗 OpenAI Embedding 额度。确定继续吗？",
@@ -596,24 +669,26 @@ async function rebuildKnowledge() {
   if (!confirmed) return;
 
   rebuildKnowledgeButton.disabled = true;
-  rebuildKnowledgeButton.textContent = "正在重建...";
+  rebuildKnowledgeButton.textContent = "正在提交任务...";
   try {
-    const response = await fetch("/knowledge/rebuild", { method: "POST" });
+    const response = await fetch("/knowledge/rebuild/async", { method: "POST" });
     const data = await response.json();
-    if (!response.ok) throw new Error(data.detail || "重建失败");
-    showKnowledgeStatus({
-      is_current: true,
-      document_count: data.document_count,
-      chunk_count: data.chunk_count,
-    });
-    rebuildKnowledgeButton.textContent = "重建完成";
-    await loadKnowledgeVersions();
+    if (!response.ok) {
+      if (response.status === 409) {
+        const activeJob = await getActiveRebuildJob();
+        if (activeJob) {
+          await watchRebuildJob(activeJob.id);
+          return;
+        }
+      }
+      throw new Error(data.detail || "重建失败");
+    }
+    await watchRebuildJob(data.id);
   } catch (error) {
     knowledgeStatus.className = "knowledge-status error";
     knowledgeStatus.textContent = `重建失败：${error.message}`;
-    rebuildKnowledgeButton.textContent = "重试重建";
-  } finally {
     rebuildKnowledgeButton.disabled = false;
+    rebuildKnowledgeButton.textContent = "重试重建";
   }
 }
 

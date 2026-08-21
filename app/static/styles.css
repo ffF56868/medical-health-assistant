@@ -68,7 +68,7 @@ h2 { font-size: 20px; margin: 0; }
 
 .knowledge-status.outdated { background: #fff2d9; border-color: #e3bd76; color: #795313; }
 
-.knowledge-status.error { background: #fdebea; border-color: #e5b2ad; color: #93342c; }
+.knowledge-status.error { background: #fdebea; border-color: #e5b2ad; color: #93342c; max-width: 360px; }
 
 .secondary-button { background: #ffffff; border: 1px solid #7c9f9e; border-radius: 5px; color: #1c5b5e; cursor: pointer; font-size: 13px; min-height: 36px; padding: 0 12px; }
 

@@ -544,6 +544,17 @@ class KnowledgeRebuildResponse(SQLModel):
     snapshot_created: bool
 
 
+class KnowledgeRebuildJobRead(SQLModel):
+    id: int
+    status: str
+    document_count: int
+    chunk_count: int
+    error_message: str | None = None
+    created_at: datetime
+    started_at: datetime | None = None
+    completed_at: datetime | None = None
+
+
 class KnowledgeVersionRead(SQLModel):
     id: int
     document_count: int
