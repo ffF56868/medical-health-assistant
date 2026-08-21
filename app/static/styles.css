@@ -120,6 +120,20 @@ h2 { font-size: 20px; margin: 0; }
 
 .review-batch-status.error { color: #9c3024; }
 
+.review-history { border-bottom: 1px solid #dce4e5; padding: 22px 0; }
+
+.review-history-status { color: #526166; font-size: 13px; min-height: 20px; margin: 10px 0; }
+
+.review-history-status.error { color: #9c3024; }
+
+.review-history-results { display: grid; gap: 8px; }
+
+.review-history-item { background: #ffffff; border: 1px solid #dce4e5; border-left: 3px solid #3b7475; border-radius: 6px; padding: 12px 13px; }
+
+.review-history-item h4 { font-size: 15px; margin: 0; }
+
+.review-history-item p { color: #526166; font-size: 13px; line-height: 1.6; margin: 7px 0 0; }
+
 .review-item { background: #ffffff; border: 1px solid #e2c78e; border-left: 3px solid #d49a27; border-radius: 6px; padding: 12px 13px; }
 
 .review-item h4 { font-size: 15px; margin: 0; }

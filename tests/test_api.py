@@ -1,13 +1,19 @@
 from types import SimpleNamespace
 
 from langchain_core.documents import Document
-from sqlmodel import Session, create_engine
+from sqlmodel import Session, create_engine, select
 
 from app.database import create_db_and_tables
 from app.main import health_check
+from app.models import KnowledgeDocument
 from app.routers import ask as ask_router
 from app.routers import evaluation as evaluation_router
 from app.routers import knowledge as knowledge_router
+from app.seed_specialty_knowledge import (
+    FOCUSED_KNOWLEDGE_DOCUMENTS,
+    SPECIALTY_KNOWLEDGE_DOCUMENTS,
+    seed_specialty_knowledge,
+)
 
 
 class FakeVectorStore:
@@ -103,6 +109,47 @@ def test_condition_can_be_created_and_listed(client):
     assert list_response.json()[0]["source_url"] == "https://example.org/condition"
     assert list_response.json()[0]["source_tier"] == "professional"
     assert list_response.json()[0]["updated_at"] is not None
+
+
+def test_specialty_knowledge_seed_is_idempotent_and_preserves_existing_edits(
+    test_engine,
+):
+    expected_document_count = len(
+        SPECIALTY_KNOWLEDGE_DOCUMENTS + FOCUSED_KNOWLEDGE_DOCUMENTS
+    )
+    with Session(test_engine) as session:
+        created_count, existing_count = seed_specialty_knowledge(session)
+        assert created_count == expected_document_count
+        assert existing_count == 0
+
+        focused_document = session.exec(
+            select(KnowledgeDocument).where(
+                KnowledgeDocument.title == "哮喘：健康教育与就医警示"
+            )
+        ).one()
+        assert focused_document.source_tier == "authority"
+        assert focused_document.source_url is not None
+
+        condition = session.exec(
+            select(KnowledgeDocument).where(
+                KnowledgeDocument.title == "呼吸内科常见病概览"
+            )
+        ).one()
+        condition.content = "人工审核后的内容"
+        session.add(condition)
+        session.commit()
+
+        created_count, existing_count = seed_specialty_knowledge(session)
+        assert created_count == 0
+        assert existing_count == expected_document_count
+
+        preserved = session.exec(
+            select(KnowledgeDocument).where(
+                KnowledgeDocument.title == "呼吸内科常见病概览"
+            )
+        ).one()
+        assert preserved.content == "人工审核后的内容"
+        assert len(session.exec(select(KnowledgeDocument)).all()) == expected_document_count
 
 
 def test_existing_sqlite_data_receives_metadata_columns_without_data_loss():
@@ -228,6 +275,28 @@ def test_existing_chat_messages_receive_response_metadata_column():
     assert migrated_row.response_metadata_json == "{}"
 
 
+def test_existing_sqlite_data_receives_the_review_log_table():
+    old_database = create_engine("sqlite://")
+    with old_database.begin() as connection:
+        connection.exec_driver_sql(
+            'CREATE TABLE "condition" ('
+            'id INTEGER PRIMARY KEY, name VARCHAR(100), '
+            'symptoms VARCHAR(5000), treatment VARCHAR(5000))'
+        )
+
+    create_db_and_tables(old_database)
+
+    with old_database.connect() as connection:
+        table_names = {
+            row[0]
+            for row in connection.exec_driver_sql(
+                "SELECT name FROM sqlite_master WHERE type = 'table'"
+            )
+        }
+
+    assert "knowledgereviewlog" in table_names
+
+
 def test_blank_knowledge_search_is_rejected(client):
     response = client.get("/knowledge/search", params={"q": " "})
     assert response.status_code == 422
@@ -331,6 +400,18 @@ def test_review_queue_batch_update_adds_verified_source_metadata(client):
     queue = client.get("/knowledge/review-queue")
     assert queue.status_code == 200
     assert queue.json()["total_count"] == 0
+
+    history = client.get("/knowledge/review-logs")
+    assert history.status_code == 200
+    assert history.json()["total_count"] == 2
+    assert {log["record_title"] for log in history.json()["logs"]} == {
+        "批量审核病症",
+        "批量审核药物",
+    }
+    assert all(
+        log["source_url"] == "https://example.org/reviewed-source"
+        for log in history.json()["logs"]
+    )
 
 
 def test_knowledge_versions_can_restore_a_previous_snapshot(client, monkeypatch):
@@ -905,6 +986,34 @@ def test_text_document_can_be_uploaded(client):
     assert response.json()["title"] == "睡眠提示"
 
 
+def test_text_documents_can_be_uploaded_in_a_batch_with_per_file_errors(client):
+    response = client.post(
+        "/documents/upload-batch",
+        files=[
+            (
+                "files",
+                (
+                    "呼吸提示.md",
+                    "保持室内通风，出现呼吸困难及时就医。".encode("utf-8"),
+                    "text/markdown",
+                ),
+            ),
+            (
+                "files",
+                ("不支持.pdf", "pdf-content".encode("utf-8"), "application/pdf"),
+            ),
+        ],
+    )
+
+    assert response.status_code == 201
+    data = response.json()
+    assert data["created_count"] == 1
+    assert data["failed_count"] == 1
+    assert data["items"][0]["title"] == "呼吸提示"
+    assert data["errors"][0]["filename"] == "不支持.pdf"
+    assert "只支持上传" in data["errors"][0]["detail"]
+
+
 def test_conversation_can_be_listed_read_and_deleted(client):
     ask_response = client.post(
         "/ask",
@@ -1124,6 +1233,55 @@ def test_rag_returns_no_match_without_calling_the_chat_model(client, monkeypatch
     data = response.json()
     assert data["source"] == "chroma-vector-search:no-match"
     assert data["references"] == []
+
+
+def test_rag_prefers_a_document_with_a_direct_title_match(client, monkeypatch):
+    mock_current_knowledge_base(monkeypatch)
+    vector_store = FakeVectorStore(
+        [
+            (
+                Document(
+                    page_content="哮喘资料内容。",
+                    metadata={
+                        "type": "document",
+                        "record_id": 1,
+                        "name": "哮喘：健康教育与就医警示",
+                    },
+                ),
+                0.55,
+            ),
+            (
+                Document(
+                    page_content="高血压资料内容。",
+                    metadata={
+                        "type": "document",
+                        "record_id": 2,
+                        "name": "高血压：健康教育与就医警示",
+                    },
+                ),
+                0.53,
+            ),
+        ]
+    )
+    chat_model = FakeChatModel()
+    monkeypatch.setattr(ask_router, "get_vector_store", lambda: vector_store)
+    monkeypatch.setattr(ask_router, "get_chat_model", lambda: chat_model)
+
+    response = client.post(
+        "/ask",
+        json={
+            "conversation_id": "test-rag-title-match",
+            "question": "哮喘有哪些常见表现？",
+            "knowledge_type": "document",
+        },
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["retrieved_count"] == 1
+    assert [item["name"] for item in data["references"]] == [
+        "哮喘：健康教育与就医警示"
+    ]
 
 
 def test_rag_limits_vector_search_to_the_selected_knowledge_type(client, monkeypatch):

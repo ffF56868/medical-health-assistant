@@ -84,6 +84,18 @@
             <div class="review-results" id="review-results"></div>
           </section>
 
+          <section class="review-history" aria-labelledby="review-history-title">
+            <div class="review-queue-heading">
+              <div>
+                <p class="eyebrow">可追溯记录</p>
+                <h3 id="review-history-title">最近审核记录</h3>
+              </div>
+              <button class="secondary-button" id="refresh-review-history" type="button">刷新记录</button>
+            </div>
+            <p class="review-history-status" id="review-history-status" aria-live="polite"></p>
+            <div class="review-history-results" id="review-history-results"></div>
+          </section>
+
           <section class="knowledge-versions" aria-labelledby="knowledge-versions-title">
             <div class="review-queue-heading">
               <div>
@@ -141,11 +153,11 @@
             <div>
               <p class="eyebrow">文件导入</p>
               <h3>上传现有健康资料</h3>
-              <p>支持 UTF-8 编码的 `.md` 或 `.txt` 文件，单个文件不超过 200KB。文件名会作为资料标题。</p>
+              <p>支持一次选择多个 UTF-8 编码的 `.md` 或 `.txt` 文件，最多 20 个，单个文件不超过 200KB。文件名会作为资料标题。</p>
             </div>
             <label class="file-picker">
               <span>选择文件</span>
-              <input id="upload-file" name="file" type="file" accept=".md,.txt,text/plain,text/markdown" required />
+              <input id="upload-file" name="files" type="file" accept=".md,.txt,text/plain,text/markdown" multiple required />
             </label>
             <button type="submit">上传资料</button>
           </form>

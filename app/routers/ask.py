@@ -126,6 +126,28 @@ def search_knowledge(
     return vector_store.similarity_search_with_relevance_scores(query, **search_options)
 
 
+def select_title_matched_documents(
+    question: str,
+    relevant_matches: list[tuple[object, float]],
+) -> list[tuple[object, float]]:
+    """Prefer documents whose explicit disease title appears in the question.
+
+    Vector similarity can group together unrelated documents that share terms
+    such as "warning" or "seek medical care".  A direct title match is a
+    stronger intent signal, while questions without such a match keep the
+    normal multi-document retrieval behavior.
+    """
+    normalized_question = question.casefold()
+    title_matches = [
+        match
+        for match in relevant_matches
+        if str(match[0].metadata.get("type", "")) == "document"
+        and str(match[0].metadata.get("name", "")).split("：", 1)[0].casefold()
+        in normalized_question
+    ]
+    return title_matches or relevant_matches
+
+
 def parse_metadata_datetime(value: object) -> datetime | None:
     if not isinstance(value, str) or not value.strip():
         return None
@@ -302,6 +324,10 @@ def ask_question(
         ) from error
 
     relevant_matches = select_distinct_relevant_matches(matches)
+    relevant_matches = select_title_matched_documents(
+        request.question,
+        relevant_matches,
+    )
     relevant_documents = [document for document, _ in relevant_matches]
 
     if not relevant_documents:
@@ -506,6 +532,10 @@ def stream_answer(
         ) from error
 
     relevant_matches = select_distinct_relevant_matches(matches)
+    relevant_matches = select_title_matched_documents(
+        request.question,
+        relevant_matches,
+    )
     relevant_documents = [document for document, _ in relevant_matches]
 
     if not relevant_documents:

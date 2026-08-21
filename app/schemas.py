@@ -97,6 +97,24 @@ class KnowledgeDocumentRead(KnowledgeDocumentCreate):
     updated_at: datetime | None = None
 
 
+class DocumentUploadItem(SQLModel):
+    filename: str
+    title: str
+    document_id: int
+
+
+class DocumentUploadError(SQLModel):
+    filename: str
+    detail: str
+
+
+class DocumentUploadBatchResponse(SQLModel):
+    created_count: int
+    failed_count: int
+    items: list[DocumentUploadItem] = Field(default_factory=list)
+    errors: list[DocumentUploadError] = Field(default_factory=list)
+
+
 KNOWLEDGE_TYPES = {"all", "condition", "drug", "document"}
 SOURCE_FILTERS = {"all", "reviewed"}
 
@@ -307,6 +325,23 @@ class KnowledgeReviewBatchUpdate(SQLModel):
 class KnowledgeReviewBatchUpdateResponse(SQLModel):
     updated_count: int
     items: list[KnowledgeReviewItem] = Field(default_factory=list)
+
+
+class KnowledgeReviewLogRead(SQLModel):
+    id: int
+    record_type: str
+    record_id: int
+    record_title: str
+    source: str
+    source_url: str
+    source_tier: str
+    action: str
+    created_at: datetime
+
+
+class KnowledgeReviewLogResponse(SQLModel):
+    total_count: int
+    logs: list[KnowledgeReviewLogRead] = Field(default_factory=list)
 
 
 class RAGEvaluationCaseResult(SQLModel):

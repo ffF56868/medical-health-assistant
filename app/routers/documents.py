@@ -6,13 +6,61 @@ from sqlmodel import Session, select
 
 from app.database import get_session
 from app.models import KnowledgeDocument
-from app.schemas import KnowledgeDocumentCreate, KnowledgeDocumentRead
+from app.schemas import (
+    DocumentUploadBatchResponse,
+    DocumentUploadError,
+    DocumentUploadItem,
+    KnowledgeDocumentCreate,
+    KnowledgeDocumentRead,
+)
 
 
 router = APIRouter(prefix="/documents", tags=["documents"])
 
 ALLOWED_SUFFIXES = {".md", ".txt"}
 MAX_DOCUMENT_BYTES = 200_000
+MAX_BATCH_FILES = 20
+MAX_BATCH_BYTES = 2_000_000
+
+
+def validate_upload_file(filename: str, content_type: str | None) -> None:
+    suffix = Path(filename).suffix.lower()
+    text_content_types = {"text/markdown", "text/plain"}
+    if suffix not in ALLOWED_SUFFIXES and content_type not in text_content_types:
+        raise ValueError("只支持上传 .md 或 .txt 文本文件")
+
+
+def get_document_title(filename: str) -> str:
+    title = Path(filename).stem.strip()
+    if not title:
+        raise ValueError("文件名不能为空")
+    return title
+
+
+async def read_upload_content(upload: UploadFile) -> tuple[str, str]:
+    filename = (upload.filename or "").strip()
+    validate_upload_file(filename, upload.content_type)
+    raw_content = await upload.read()
+    if len(raw_content) > MAX_DOCUMENT_BYTES:
+        raise ValueError("文件不能超过 200KB")
+
+    try:
+        content = raw_content.decode("utf-8-sig").strip()
+    except UnicodeDecodeError as error:
+        raise ValueError("文件必须使用 UTF-8 编码保存") from error
+    if not content:
+        raise ValueError("上传的文件内容不能为空")
+    return filename, content
+
+
+def build_uploaded_document(filename: str, content: str) -> KnowledgeDocument:
+    return KnowledgeDocument(
+        title=get_document_title(filename),
+        content=content,
+        source=f"上传文件：{filename}",
+        source_tier="unverified",
+        updated_at=datetime.now(UTC),
+    )
 
 
 @router.post("", response_model=KnowledgeDocumentRead, status_code=201)
@@ -42,52 +90,92 @@ async def upload_document(
     file: UploadFile = File(...),
     session: Session = Depends(get_session),
 ):
-    filename = file.filename or ""
-    suffix = Path(filename).suffix.lower()
-
-    text_content_types = {"text/markdown", "text/plain"}
-    if suffix not in ALLOWED_SUFFIXES and file.content_type not in text_content_types:
-        raise HTTPException(
-            status_code=400,
-            detail="只支持上传 .md 或 .txt 文本文件",
-        )
-
-    raw_content = await file.read()
-    if len(raw_content) > MAX_DOCUMENT_BYTES:
-        raise HTTPException(status_code=413, detail="文件不能超过 200KB")
-
     try:
-        content = raw_content.decode("utf-8-sig").strip()
-    except UnicodeDecodeError as error:
-        raise HTTPException(
-            status_code=400,
-            detail="文件必须使用 UTF-8 编码保存",
-        ) from error
-
-    if not content:
-        raise HTTPException(status_code=400, detail="上传的文件内容不能为空")
-
-    title = Path(filename).stem.strip() or "未命名知识文档"
-    if not title:
-        raise HTTPException(status_code=400, detail="文件名不能为空")
+        filename, content = await read_upload_content(file)
+        document = build_uploaded_document(filename, content)
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
 
     duplicate = session.exec(
-        select(KnowledgeDocument).where(KnowledgeDocument.title == title)
+        select(KnowledgeDocument).where(
+            KnowledgeDocument.title == document.title
+        )
     ).first()
     if duplicate is not None:
         raise HTTPException(status_code=409, detail="同名知识文档已经存在")
 
-    document = KnowledgeDocument(
-        title=title,
-        content=content,
-        source=f"上传文件：{filename}",
-        source_tier="unverified",
-        updated_at=datetime.now(UTC),
-    )
     session.add(document)
     session.commit()
     session.refresh(document)
     return document
+
+
+@router.post(
+    "/upload-batch",
+    response_model=DocumentUploadBatchResponse,
+    status_code=201,
+)
+async def upload_documents(
+    files: list[UploadFile] = File(...),
+    session: Session = Depends(get_session),
+):
+    """Import several text files and report per-file validation failures."""
+    if not files:
+        raise HTTPException(status_code=400, detail="至少选择一个文件")
+    if len(files) > MAX_BATCH_FILES:
+        raise HTTPException(
+            status_code=413,
+            detail=f"一次最多上传 {MAX_BATCH_FILES} 个文件",
+        )
+
+    created_documents: list[tuple[str, KnowledgeDocument]] = []
+    errors: list[DocumentUploadError] = []
+    total_bytes = 0
+    seen_titles: set[str] = set()
+
+    for upload in files:
+        filename = (upload.filename or "未命名文件").strip() or "未命名文件"
+        try:
+            filename, content = await read_upload_content(upload)
+            total_bytes += len(content.encode("utf-8"))
+            if total_bytes > MAX_BATCH_BYTES:
+                raise ValueError("批量上传文件总大小不能超过 2MB")
+
+            document = build_uploaded_document(filename, content)
+            if document.title in seen_titles:
+                raise ValueError("本次上传中存在同名文件")
+            duplicate = session.exec(
+                select(KnowledgeDocument).where(
+                    KnowledgeDocument.title == document.title
+                )
+            ).first()
+            if duplicate is not None:
+                raise ValueError("同名知识文档已经存在")
+
+            seen_titles.add(document.title)
+            session.add(document)
+            created_documents.append((filename, document))
+        except ValueError as error:
+            errors.append(DocumentUploadError(filename=filename, detail=str(error)))
+
+    session.commit()
+    items: list[DocumentUploadItem] = []
+    for filename, document in created_documents:
+        session.refresh(document)
+        items.append(
+            DocumentUploadItem(
+                filename=filename,
+                title=document.title,
+                document_id=document.id,
+            )
+        )
+
+    return DocumentUploadBatchResponse(
+        created_count=len(items),
+        failed_count=len(errors),
+        items=items,
+        errors=errors,
+    )
 
 
 @router.get("", response_model=list[KnowledgeDocumentRead])

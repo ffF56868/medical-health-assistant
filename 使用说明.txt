@@ -55,7 +55,8 @@ app/routers/drugs.py
 
 app/routers/documents.py
 - 健康资料的新增、查询、修改、删除接口。
-- 也负责上传 .md 和 .txt 文件。
+- 也负责上传 .md 和 .txt 文件，支持单文件上传和批量上传。
+- 批量上传接口会逐个返回成功或失败原因，不会因为一个坏文件丢掉其他合法文件。
 
 app/routers/knowledge.py
 - 知识库管理接口。
@@ -83,7 +84,7 @@ app/static/index.html
 
 app/static/app.js
 - 页面交互逻辑。
-- 发送问题、接收流式回答、显示引用、查看原文、管理资料、重建知识库、提交反馈、运行评测、导出对话都在这里。
+- 发送问题、接收流式回答、显示引用、查看原文、管理资料、批量上传、重建知识库、提交反馈、运行评测、导出对话都在这里。
 
 app/static/styles.css
 - 全部页面样式与响应式布局。
@@ -115,6 +116,12 @@ docker-compose.yml
 docker-compose.test.yml
 - 测试专用 Docker 配置。
 - 使用临时数据库和临时 Chroma，不影响正式数据。
+
+批量导入资料
+- 页面中打开“管理资料”，在“文件导入”处一次选择多个 `.md` 或 `.txt` 文件。
+- 接口地址：`POST /documents/upload-batch`，表单字段名是 `files`。
+- 最多 20 个文件，单个文件不超过 200KB，批量总大小不超过 2MB。
+- 导入成功后知识库状态会变成“待重建”，点击“重建知识库”后才会更新 Chroma。
 
 scripts/docker-up.sh
 - 常用启动脚本。

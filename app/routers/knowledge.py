@@ -9,11 +9,19 @@ from app.knowledge_versions import (
     get_current_snapshot_hash,
     restore_snapshot_payload,
 )
-from app.models import Condition, Drug, KnowledgeDocument, KnowledgeSnapshot
+from app.models import (
+    Condition,
+    Drug,
+    KnowledgeDocument,
+    KnowledgeReviewLog,
+    KnowledgeSnapshot,
+)
 from app.schemas import (
     KnowledgeRebuildResponse,
     KnowledgeReviewBatchUpdate,
     KnowledgeReviewBatchUpdateResponse,
+    KnowledgeReviewLogRead,
+    KnowledgeReviewLogResponse,
     KnowledgeRestoreResponse,
     KnowledgeReviewItem,
     KnowledgeReviewResponse,
@@ -219,6 +227,18 @@ def batch_update_review_metadata(
         session.add(record)
         updated_records.append((target.type, record))
 
+    for record_type, record in updated_records:
+        title = record.name if record_type != "document" else record.title
+        session.add(
+            KnowledgeReviewLog(
+                record_type=record_type,
+                record_id=record.id,
+                record_title=title,
+                source=update_data.source,
+                source_url=update_data.source_url,
+                source_tier=update_data.source_tier,
+            )
+        )
     session.commit()
     items: list[KnowledgeReviewItem] = []
     for record_type, record in updated_records:
@@ -244,6 +264,24 @@ def batch_update_review_metadata(
     return KnowledgeReviewBatchUpdateResponse(
         updated_count=len(items),
         items=items,
+    )
+
+
+@router.get("/review-logs", response_model=KnowledgeReviewLogResponse)
+def list_review_logs(
+    limit: int = Query(default=20, ge=1, le=100),
+    session: Session = Depends(get_session),
+):
+    """Return recent source review actions for traceability."""
+    logs = session.exec(
+        select(KnowledgeReviewLog)
+        .order_by(KnowledgeReviewLog.created_at.desc(), KnowledgeReviewLog.id.desc())
+        .limit(limit)
+    ).all()
+    total_count = len(session.exec(select(KnowledgeReviewLog)).all())
+    return KnowledgeReviewLogResponse(
+        total_count=total_count,
+        logs=[KnowledgeReviewLogRead.model_validate(log) for log in logs],
     )
 
 

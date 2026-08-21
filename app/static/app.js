@@ -43,6 +43,9 @@ const refreshReviewQueueButton = document.querySelector("#refresh-review-queue")
 const reviewBatchForm = document.querySelector("#review-batch-form");
 const reviewBatchSubmitButton = document.querySelector("#review-batch-submit");
 const reviewBatchStatus = document.querySelector("#review-batch-status");
+const reviewHistoryStatus = document.querySelector("#review-history-status");
+const reviewHistoryResults = document.querySelector("#review-history-results");
+const refreshReviewHistoryButton = document.querySelector("#refresh-review-history");
 const versionStatus = document.querySelector("#version-status");
 const versionResults = document.querySelector("#version-results");
 const refreshKnowledgeVersionsButton = document.querySelector("#refresh-knowledge-versions");
@@ -624,6 +627,7 @@ function setManagerVisible(visible) {
   if (visible) {
     searchInput.focus();
     loadReviewQueue();
+    loadReviewHistory();
     loadKnowledgeVersions();
   }
 }
@@ -1242,6 +1246,7 @@ async function submitReviewBatch(event) {
     await Promise.all([
       loadKnowledgeStatus(),
       loadReviewQueue(),
+      loadReviewHistory(),
       loadKnowledgeVersions(),
     ]);
     if (searchInput.value.trim()) searchForm.requestSubmit();
@@ -1250,6 +1255,52 @@ async function submitReviewBatch(event) {
     reviewBatchStatus.textContent = `批量审核失败：${error.message}`;
   } finally {
     syncReviewBatchControls();
+  }
+}
+
+function renderReviewHistory(data) {
+  reviewHistoryResults.innerHTML = "";
+  if (data.logs.length === 0) {
+    reviewHistoryStatus.textContent = "还没有审核记录。完成一次批量审核后会自动保存。";
+    return;
+  }
+
+  reviewHistoryStatus.textContent = `共保存 ${data.total_count} 条审核记录，当前显示最近 ${data.logs.length} 条。`;
+  for (const log of data.logs) {
+    const item = document.createElement("article");
+    item.className = "review-history-item";
+    const header = document.createElement("div");
+    header.className = "search-result-header";
+    const title = document.createElement("h4");
+    title.textContent = log.record_title;
+    const type = document.createElement("span");
+    type.className = `type-chip ${log.record_type}`;
+    type.textContent = getKnowledgeTypeLabel(log.record_type);
+    header.append(title, type);
+    const detail = document.createElement("p");
+    detail.textContent = `审核时间：${formatUpdatedAt(log.created_at)} | 来源：${log.source} | 可信度：${getSourceTierLabel(log.source_tier)}`;
+    item.append(header, detail);
+    const sourceUrlLink = createSourceUrlLink(log.source_url);
+    if (sourceUrlLink) item.append(sourceUrlLink);
+    reviewHistoryResults.append(item);
+  }
+}
+
+async function loadReviewHistory() {
+  reviewHistoryStatus.className = "review-history-status";
+  reviewHistoryStatus.textContent = "正在读取审核记录...";
+  reviewHistoryResults.innerHTML = "";
+  refreshReviewHistoryButton.disabled = true;
+  try {
+    const response = await fetch("/knowledge/review-logs");
+    const data = await response.json();
+    if (!response.ok) throw new Error(getErrorMessage(data, "读取审核记录失败。"));
+    renderReviewHistory(data);
+  } catch (error) {
+    reviewHistoryStatus.className = "review-history-status error";
+    reviewHistoryStatus.textContent = `读取失败：${error.message}`;
+  } finally {
+    refreshReviewHistoryButton.disabled = false;
   }
 }
 
@@ -1437,25 +1488,26 @@ async function createKnowledgeEntry(formElement, endpoint) {
 
 async function uploadKnowledgeFile(event) {
   event.preventDefault();
-  const file = uploadFile.files[0];
-  if (!file) return;
+  const files = Array.from(uploadFile.files);
+  if (files.length === 0) return;
 
   const submitButton = uploadForm.querySelector("button[type='submit']");
   const formData = new FormData();
-  formData.append("file", file);
+  for (const file of files) formData.append("files", file);
   entryStatus.className = "manager-status";
-  entryStatus.textContent = `正在上传“${file.name}”...`;
+  entryStatus.textContent = `正在上传 ${files.length} 个文件...`;
   submitButton.disabled = true;
 
   try {
-    const response = await fetch("/documents/upload", {
+    const response = await fetch("/documents/upload-batch", {
       method: "POST",
       body: formData,
     });
     const data = await response.json();
     if (!response.ok) throw new Error(getErrorMessage(data, "上传失败。"));
     uploadForm.reset();
-    entryStatus.textContent = `已上传“${data.title}”。知识库已变为待重建状态。`;
+    const failedNames = data.errors.map((item) => `${item.filename}（${item.detail}）`);
+    entryStatus.textContent = `成功导入 ${data.created_count} 个文件，失败 ${data.failed_count} 个。知识库已变为待重建状态。${failedNames.length ? ` 失败：${failedNames.join("、")}` : ""}`;
     await loadKnowledgeStatus();
     await loadReviewQueue();
     await loadKnowledgeVersions();
@@ -1673,6 +1725,7 @@ refreshHistoryButton.addEventListener("click", loadConversationList);
 rebuildKnowledgeButton.addEventListener("click", rebuildKnowledge);
 refreshReviewQueueButton.addEventListener("click", loadReviewQueue);
 reviewBatchForm.addEventListener("submit", submitReviewBatch);
+refreshReviewHistoryButton.addEventListener("click", loadReviewHistory);
 refreshKnowledgeVersionsButton.addEventListener("click", loadKnowledgeVersions);
 runRagEvaluationButton.addEventListener("click", runRagEvaluation);
 compareRetrievalButton.addEventListener("click", compareRetrievalStrategies);

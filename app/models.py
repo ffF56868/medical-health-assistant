@@ -77,6 +77,21 @@ class KnowledgeSnapshot(SQLModel, table=True):
     )
 
 
+class KnowledgeReviewLog(SQLModel, table=True):
+    id: int | None = Field(default=None, primary_key=True)
+    record_type: str = Field(max_length=20, index=True)
+    record_id: int = Field(index=True)
+    record_title: str = Field(max_length=200)
+    source: str = Field(max_length=200)
+    source_url: str = Field(max_length=2000)
+    source_tier: str = Field(max_length=20)
+    action: str = Field(default="batch_review", max_length=50)
+    created_at: datetime = Field(
+        default_factory=lambda: datetime.now(UTC),
+        index=True,
+    )
+
+
 class RAGEvaluationCase(SQLModel, table=True):
     id: int | None = Field(default=None, primary_key=True)
     question: str = Field(max_length=1000)
