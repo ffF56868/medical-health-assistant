@@ -49,6 +49,9 @@ const refreshReviewHistoryButton = document.querySelector("#refresh-review-histo
 const versionStatus = document.querySelector("#version-status");
 const versionResults = document.querySelector("#version-results");
 const refreshKnowledgeVersionsButton = document.querySelector("#refresh-knowledge-versions");
+const rebuildHistoryStatus = document.querySelector("#rebuild-history-status");
+const rebuildHistoryResults = document.querySelector("#rebuild-history-results");
+const refreshRebuildHistoryButton = document.querySelector("#refresh-rebuild-history");
 const runRagEvaluationButton = document.querySelector("#run-rag-evaluation");
 const compareRetrievalButton = document.querySelector("#compare-retrieval");
 const diagnoseRetrievalButton = document.querySelector("#diagnose-retrieval");
@@ -612,13 +615,7 @@ async function getRebuildJob(jobId) {
 }
 
 function showRebuildJob(job) {
-  const statusLabels = {
-    pending: "等待开始",
-    running: "正在生成向量",
-    completed: "重建完成",
-    failed: "重建失败",
-  };
-  const statusLabel = statusLabels[job.status] || job.status;
+  const statusLabel = getRebuildStatusLabel(job.status);
   knowledgeStatus.className = "knowledge-status";
   if (job.status === "failed") knowledgeStatus.classList.add("error");
   if (job.status === "pending" || job.status === "running") {
@@ -631,6 +628,15 @@ function showRebuildJob(job) {
   if (job.status === "failed" && job.error_message) {
     knowledgeStatus.textContent += `：${job.error_message}`;
   }
+}
+
+function getRebuildStatusLabel(status) {
+  return ({
+    pending: "等待开始",
+    running: "正在生成向量",
+    completed: "重建完成",
+    failed: "重建失败",
+  })[status] || status;
 }
 
 function wait(milliseconds) {
@@ -648,6 +654,7 @@ async function watchRebuildJob(jobId) {
       if (job.status === "completed") {
         await loadKnowledgeStatus();
         await loadKnowledgeVersions();
+        await loadRebuildJobHistory();
         return;
       }
       if (job.status === "failed") {
@@ -704,6 +711,7 @@ function setManagerVisible(visible) {
     loadReviewQueue();
     loadReviewHistory();
     loadKnowledgeVersions();
+    loadRebuildJobHistory();
   }
 }
 
@@ -1439,6 +1447,60 @@ async function loadKnowledgeVersions() {
   }
 }
 
+function renderRebuildJobHistory(data) {
+  rebuildHistoryResults.innerHTML = "";
+  if (data.jobs.length === 0) {
+    rebuildHistoryStatus.textContent = "还没有重建任务记录。点击一次“重建知识库”后会自动保存。";
+    return;
+  }
+
+  rebuildHistoryStatus.textContent = `共 ${data.total_count} 次重建，当前显示最近 ${data.jobs.length} 次。`;
+  for (const job of data.jobs) {
+    const item = document.createElement("article");
+    item.className = "rebuild-job-item";
+    const header = document.createElement("div");
+    header.className = "search-result-header";
+    const title = document.createElement("h4");
+    title.textContent = `任务 #${job.id}`;
+    const state = document.createElement("span");
+    state.className = `job-status ${job.status}`;
+    state.textContent = getRebuildStatusLabel(job.status);
+    header.append(title, state);
+
+    const detail = document.createElement("p");
+    const createdAt = formatUpdatedAt(job.created_at);
+    const completedAt = job.completed_at ? ` | 结束：${formatUpdatedAt(job.completed_at)}` : "";
+    detail.textContent = `创建：${createdAt} | ${job.document_count} 份资料 | ${job.chunk_count} 个切块${completedAt}`;
+    item.append(header, detail);
+
+    if (job.error_message) {
+      const error = document.createElement("p");
+      error.className = "rebuild-job-error";
+      error.textContent = `失败原因：${job.error_message}`;
+      item.append(error);
+    }
+    rebuildHistoryResults.append(item);
+  }
+}
+
+async function loadRebuildJobHistory() {
+  rebuildHistoryStatus.className = "rebuild-history-status";
+  rebuildHistoryStatus.textContent = "正在读取重建任务...";
+  rebuildHistoryResults.innerHTML = "";
+  refreshRebuildHistoryButton.disabled = true;
+  try {
+    const response = await fetch("/knowledge/rebuild/jobs?limit=20");
+    const data = await response.json();
+    if (!response.ok) throw new Error(getErrorMessage(data, "读取重建任务失败。"));
+    renderRebuildJobHistory(data);
+  } catch (error) {
+    rebuildHistoryStatus.className = "rebuild-history-status error";
+    rebuildHistoryStatus.textContent = `读取失败：${error.message}`;
+  } finally {
+    refreshRebuildHistoryButton.disabled = false;
+  }
+}
+
 async function restoreKnowledgeVersion(version, button) {
   const confirmed = window.confirm(
     `恢复版本 #${version.id} 会覆盖当前的病症、药物和手写资料。系统会先自动备份当前资料，再重新建立向量库。确定恢复吗？`,
@@ -1802,6 +1864,7 @@ refreshReviewQueueButton.addEventListener("click", loadReviewQueue);
 reviewBatchForm.addEventListener("submit", submitReviewBatch);
 refreshReviewHistoryButton.addEventListener("click", loadReviewHistory);
 refreshKnowledgeVersionsButton.addEventListener("click", loadKnowledgeVersions);
+refreshRebuildHistoryButton.addEventListener("click", loadRebuildJobHistory);
 runRagEvaluationButton.addEventListener("click", runRagEvaluation);
 compareRetrievalButton.addEventListener("click", compareRetrievalStrategies);
 diagnoseRetrievalButton.addEventListener("click", diagnoseCurrentRetrieval);

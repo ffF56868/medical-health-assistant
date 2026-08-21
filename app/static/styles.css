@@ -172,6 +172,30 @@ h2 { font-size: 20px; margin: 0; }
 
 .version-item button:disabled { cursor: wait; opacity: 0.65; }
 
+.rebuild-history { border-bottom: 1px solid #dce4e5; padding: 22px 0; }
+
+.rebuild-history-status { color: #526166; font-size: 13px; min-height: 20px; margin: 10px 0; }
+
+.rebuild-history-status.error { color: #9c3024; }
+
+.rebuild-history-results { display: grid; gap: 8px; }
+
+.rebuild-job-item { background: #ffffff; border: 1px solid #dce4e5; border-left: 3px solid #7c9f9e; border-radius: 6px; padding: 12px 13px; }
+
+.rebuild-job-item h4 { font-size: 15px; margin: 0; }
+
+.rebuild-job-item p { color: #526166; font-size: 13px; line-height: 1.6; margin: 7px 0 0; }
+
+.job-status { border-radius: 4px; font-size: 12px; padding: 3px 7px; }
+
+.job-status.pending, .job-status.running { background: #fff2d9; color: #795313; }
+
+.job-status.completed { background: #e0f0ef; color: #15595c; }
+
+.job-status.failed { background: #fdebea; color: #93342c; }
+
+.rebuild-job-error { color: #93342c !important; }
+
 .knowledge-search { display: flex; gap: 10px; margin-top: 22px; }
 
 .knowledge-search input, .entry-form input, .entry-form textarea, .entry-form select { background: #ffffff; border: 1px solid #a8b9ba; border-radius: 5px; color: #17212b; padding: 10px 11px; width: 100%; }

@@ -128,6 +128,7 @@ docker-compose.test.yml
 - `POST /knowledge/rebuild/async`：创建重建任务，返回任务编号，状态码是 202。
 - `GET /knowledge/rebuild/jobs/{job_id}`：查询指定任务，状态有 `pending`（等待）、`running`（执行中）、`completed`（完成）、`failed`（失败）。
 - `GET /knowledge/rebuild/jobs/active`：查询当前是否有等待或执行中的任务，刷新页面后也能恢复显示。
+- `GET /knowledge/rebuild/jobs`：查看最近的重建任务历史，包括完成数量和失败原因。
 - 同一时间只允许一个重建任务，重复点击会返回已有任务，前端会继续查看它。
 - 原来的 `POST /knowledge/rebuild` 同步接口仍然保留，主要用于兼容旧调用和测试。
 - 重建失败时会把错误摘要保存到任务记录，便于定位问题；不会把完整程序堆栈返回给页面。

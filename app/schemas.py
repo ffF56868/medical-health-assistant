@@ -555,6 +555,11 @@ class KnowledgeRebuildJobRead(SQLModel):
     completed_at: datetime | None = None
 
 
+class KnowledgeRebuildJobListResponse(SQLModel):
+    total_count: int
+    jobs: list[KnowledgeRebuildJobRead] = Field(default_factory=list)
+
+
 class KnowledgeVersionRead(SQLModel):
     id: int
     document_count: int

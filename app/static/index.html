@@ -108,6 +108,18 @@
             <div class="version-results" id="version-results"></div>
           </section>
 
+          <section class="rebuild-history" aria-labelledby="rebuild-history-title">
+            <div class="review-queue-heading">
+              <div>
+                <p class="eyebrow">运行记录</p>
+                <h3 id="rebuild-history-title">知识库重建任务</h3>
+              </div>
+              <button class="secondary-button" id="refresh-rebuild-history" type="button">刷新任务</button>
+            </div>
+            <p class="rebuild-history-status" id="rebuild-history-status" aria-live="polite"></p>
+            <div class="rebuild-history-results" id="rebuild-history-results"></div>
+          </section>
+
           <form class="knowledge-search" id="knowledge-search-form">
             <label class="sr-only" for="knowledge-query">搜索知识库</label>
             <input id="knowledge-query" maxlength="100" placeholder="搜索病症、药物或资料关键词" required />

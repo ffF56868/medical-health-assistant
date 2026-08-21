@@ -537,6 +537,32 @@ def test_rebuild_job_records_failure(test_engine, monkeypatch):
         assert failed_job.completed_at is not None
 
 
+def test_rebuild_job_history_lists_recent_jobs(client, test_engine):
+    with Session(test_engine) as session:
+        session.add_all(
+            [
+                KnowledgeRebuildJob(
+                    status="completed",
+                    document_count=10,
+                    chunk_count=20,
+                ),
+                KnowledgeRebuildJob(
+                    status="failed",
+                    error_message="测试失败",
+                ),
+            ]
+        )
+        session.commit()
+
+    response = client.get("/knowledge/rebuild/jobs", params={"limit": 1})
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["total_count"] == 2
+    assert len(data["jobs"]) == 1
+    assert data["jobs"][0]["status"] in {"completed", "failed"}
+
+
 def test_rag_evaluation_reports_hits_in_the_top_three(client, monkeypatch):
     vector_store = FakeEvaluationVectorStore()
     monkeypatch.setattr(

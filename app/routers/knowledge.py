@@ -20,6 +20,7 @@ from app.models import (
 )
 from app.schemas import (
     KnowledgeRebuildResponse,
+    KnowledgeRebuildJobListResponse,
     KnowledgeRebuildJobRead,
     KnowledgeReviewBatchUpdate,
     KnowledgeReviewBatchUpdateResponse,
@@ -187,6 +188,23 @@ def start_async_rebuild(
 def get_active_rebuild_job_status(session: Session = Depends(get_session)):
     job = get_active_rebuild_job(session)
     return job
+
+
+@router.get(
+    "/rebuild/jobs",
+    response_model=KnowledgeRebuildJobListResponse,
+)
+def list_rebuild_jobs(
+    limit: int = Query(default=20, ge=1, le=100),
+    session: Session = Depends(get_session),
+):
+    jobs = session.exec(
+        select(KnowledgeRebuildJob)
+        .order_by(KnowledgeRebuildJob.created_at.desc(), KnowledgeRebuildJob.id.desc())
+        .limit(limit)
+    ).all()
+    total_count = len(session.exec(select(KnowledgeRebuildJob)).all())
+    return KnowledgeRebuildJobListResponse(total_count=total_count, jobs=jobs)
 
 
 @router.get(
