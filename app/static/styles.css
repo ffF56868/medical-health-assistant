@@ -102,6 +102,24 @@ h2 { font-size: 20px; margin: 0; }
 
 .review-results { display: grid; gap: 8px; }
 
+.review-batch-form { background: #f6f9f8; border: 1px solid #dce4e5; border-radius: 6px; margin: 12px 0 8px; padding: 13px; }
+
+.review-batch-fields { display: grid; gap: 10px; grid-template-columns: 1fr 1.3fr 150px; }
+
+.review-batch-fields label { color: #405258; display: grid; font-size: 13px; gap: 6px; }
+
+.review-batch-fields input, .review-batch-fields select { background: #ffffff; border: 1px solid #a8b9ba; border-radius: 5px; color: #17212b; min-height: 38px; padding: 0 10px; width: 100%; }
+
+.review-batch-fields input:focus, .review-batch-fields select:focus { border-color: #21676a; outline: 2px solid #d9ef61; }
+
+.review-batch-form button { background: #21676a; border: 0; border-radius: 5px; color: #ffffff; cursor: pointer; margin-top: 12px; min-height: 38px; padding: 0 16px; }
+
+.review-batch-form button:disabled { cursor: not-allowed; opacity: 0.65; }
+
+.review-batch-status { color: #526166; font-size: 13px; min-height: 20px; margin: 8px 0; }
+
+.review-batch-status.error { color: #9c3024; }
+
 .review-item { background: #ffffff; border: 1px solid #e2c78e; border-left: 3px solid #d49a27; border-radius: 6px; padding: 12px 13px; }
 
 .review-item h4 { font-size: 15px; margin: 0; }
@@ -111,6 +129,10 @@ h2 { font-size: 20px; margin: 0; }
 .review-item .review-reasons { color: #8b4b10; font-weight: 700; }
 
 .review-item button { background: #ffffff; border: 1px solid #a8b9ba; border-radius: 4px; color: #315b5d; cursor: pointer; font-size: 12px; margin-top: 10px; min-height: 29px; padding: 0 9px; }
+
+.review-select { align-items: center; color: #526166; cursor: pointer; display: inline-flex; font-size: 12px; gap: 4px; }
+
+.review-select input { accent-color: #21676a; height: 15px; margin: 0; width: 15px; }
 
 .knowledge-versions { border-bottom: 1px solid #dce4e5; padding: 22px 0; }
 
@@ -414,6 +436,10 @@ h2 { font-size: 20px; margin: 0; }
 
 .reference-open:disabled { color: #657278; cursor: wait; }
 
+.source-url-link { color: #21676a; display: inline-block; font-size: 13px; margin-top: 7px; overflow-wrap: anywhere; text-decoration: underline; text-underline-offset: 3px; }
+
+.reference-detail .source-url-link { margin-top: 4px; }
+
 .reference-dialog { border: 1px solid #b9cecf; border-radius: 6px; color: #26363a; max-height: min(720px, calc(100vh - 36px)); padding: 20px; width: min(640px, calc(100vw - 32px)); }
 
 .reference-dialog::backdrop { background: rgba(25, 45, 48, 0.42); }
@@ -482,6 +508,7 @@ h2 { font-size: 20px; margin: 0; }
   .manager-grid { grid-template-columns: 1fr; }
   .metric-grid, .dashboard-grid { grid-template-columns: 1fr; }
   .knowledge-search { flex-direction: column; }
+  .review-batch-fields { grid-template-columns: 1fr; }
   .evaluation-heading { align-items: flex-start; flex-direction: column; }
   .evaluation-actions { justify-content: flex-start; width: 100%; }
   .custom-evaluation-form { align-items: stretch; grid-template-columns: 1fr; }

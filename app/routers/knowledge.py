@@ -1,3 +1,5 @@
+from datetime import UTC, datetime
+
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlmodel import Session, select
 
@@ -10,6 +12,8 @@ from app.knowledge_versions import (
 from app.models import Condition, Drug, KnowledgeDocument, KnowledgeSnapshot
 from app.schemas import (
     KnowledgeRebuildResponse,
+    KnowledgeReviewBatchUpdate,
+    KnowledgeReviewBatchUpdateResponse,
     KnowledgeRestoreResponse,
     KnowledgeReviewItem,
     KnowledgeReviewResponse,
@@ -57,6 +61,7 @@ def build_review_item(
         record.source,
         record.source_tier,
         record.updated_at,
+        record.source_url,
     )
     if not review_reasons:
         return None
@@ -65,6 +70,7 @@ def build_review_item(
         record_id=record.id,
         title=title,
         source=record.source,
+        source_url=record.source_url,
         source_tier=record.source_tier,
         updated_at=record.updated_at,
         review_reasons=review_reasons,
@@ -183,6 +189,64 @@ def get_review_queue(
     )
 
 
+@router.post(
+    "/review-queue/batch-update",
+    response_model=KnowledgeReviewBatchUpdateResponse,
+)
+def batch_update_review_metadata(
+    update_data: KnowledgeReviewBatchUpdate,
+    session: Session = Depends(get_session),
+):
+    """Apply one verified source record to several selected knowledge items."""
+    model_by_type = {
+        "condition": Condition,
+        "drug": Drug,
+        "document": KnowledgeDocument,
+    }
+    updated_records: list[tuple[str, Condition | Drug | KnowledgeDocument]] = []
+    for target in update_data.targets:
+        model = model_by_type[target.type]
+        record = session.get(model, target.record_id)
+        if record is None:
+            raise HTTPException(
+                status_code=404,
+                detail=f"待审核资料不存在：{target.type} #{target.record_id}",
+            )
+        record.source = update_data.source
+        record.source_url = update_data.source_url
+        record.source_tier = update_data.source_tier
+        record.updated_at = datetime.now(UTC)
+        session.add(record)
+        updated_records.append((target.type, record))
+
+    session.commit()
+    items: list[KnowledgeReviewItem] = []
+    for record_type, record in updated_records:
+        session.refresh(record)
+        title = record.name if record_type != "document" else record.title
+        items.append(
+            KnowledgeReviewItem(
+                type=record_type,
+                record_id=record.id,
+                title=title,
+                source=record.source,
+                source_url=record.source_url,
+                source_tier=record.source_tier,
+                updated_at=record.updated_at,
+                review_reasons=get_source_review_reasons(
+                    record.source,
+                    record.source_tier,
+                    record.updated_at,
+                    record.source_url,
+                ),
+            )
+        )
+    return KnowledgeReviewBatchUpdateResponse(
+        updated_count=len(items),
+        items=items,
+    )
+
+
 @router.get("/search", response_model=KnowledgeSearchResponse)
 def search_knowledge(
     q: str = Query(min_length=1, max_length=100),
@@ -209,12 +273,14 @@ def search_knowledge(
                     record_id=condition.id,
                     title=condition.name,
                     source=condition.source,
+                    source_url=condition.source_url,
                     source_tier=condition.source_tier,
                     updated_at=condition.updated_at,
                     needs_review=needs_source_review(
                         condition.source_tier,
                         condition.updated_at,
                         condition.source,
+                        condition.source_url,
                     ),
                     matched_fields=matched_fields,
                     excerpt=build_excerpt(query, "\n".join(fields.values())),
@@ -235,12 +301,14 @@ def search_knowledge(
                     record_id=drug.id,
                     title=drug.name,
                     source=drug.source,
+                    source_url=drug.source_url,
                     source_tier=drug.source_tier,
                     updated_at=drug.updated_at,
                     needs_review=needs_source_review(
                         drug.source_tier,
                         drug.updated_at,
                         drug.source,
+                        drug.source_url,
                     ),
                     matched_fields=matched_fields,
                     excerpt=build_excerpt(query, "\n".join(fields.values())),
@@ -263,12 +331,14 @@ def search_knowledge(
                     record_id=document.id,
                     title=document.title,
                     source=document.source,
+                    source_url=document.source_url,
                     source_tier=document.source_tier,
                     updated_at=document.updated_at,
                     needs_review=needs_source_review(
                         document.source_tier,
                         document.updated_at,
                         document.source,
+                        document.source_url,
                     ),
                     matched_fields=matched_fields,
                     excerpt=build_excerpt(query, "\n".join(fields.values())),

@@ -82,6 +82,7 @@ def update_condition(
     condition.symptoms = condition_data.symptoms
     condition.treatment = condition_data.treatment
     condition.source = condition_data.source
+    condition.source_url = condition_data.source_url
     condition.source_tier = condition_data.source_tier
     condition.updated_at = datetime.now(UTC)
     session.add(condition)

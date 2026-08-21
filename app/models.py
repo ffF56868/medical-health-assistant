@@ -9,6 +9,7 @@ class Condition(SQLModel, table=True):
     symptoms: str = Field(max_length=5000)
     treatment: str = Field(max_length=5000)
     source: str = Field(default="未标注来源", max_length=200)
+    source_url: str | None = Field(default=None, max_length=2000)
     source_tier: str = Field(default="unverified", max_length=20)
     updated_at: datetime | None = Field(default=None)
 
@@ -19,6 +20,7 @@ class Drug(SQLModel, table=True):
     effects: str = Field(max_length=5000)
     instructions: str = Field(max_length=5000)
     source: str = Field(default="未标注来源", max_length=200)
+    source_url: str | None = Field(default=None, max_length=2000)
     source_tier: str = Field(default="unverified", max_length=20)
     updated_at: datetime | None = Field(default=None)
 
@@ -28,6 +30,7 @@ class KnowledgeDocument(SQLModel, table=True):
     title: str = Field(index=True, max_length=200)
     content: str = Field(max_length=20000)
     source: str = Field(default="未标注来源", max_length=200)
+    source_url: str | None = Field(default=None, max_length=2000)
     source_tier: str = Field(default="unverified", max_length=20)
     updated_at: datetime | None = Field(default=None)
 

@@ -40,6 +40,9 @@ const recentFeedbackList = document.querySelector("#recent-feedback-list");
 const reviewStatus = document.querySelector("#review-status");
 const reviewResults = document.querySelector("#review-results");
 const refreshReviewQueueButton = document.querySelector("#refresh-review-queue");
+const reviewBatchForm = document.querySelector("#review-batch-form");
+const reviewBatchSubmitButton = document.querySelector("#review-batch-submit");
+const reviewBatchStatus = document.querySelector("#review-batch-status");
 const versionStatus = document.querySelector("#version-status");
 const versionResults = document.querySelector("#version-results");
 const refreshKnowledgeVersionsButton = document.querySelector("#refresh-knowledge-versions");
@@ -84,6 +87,7 @@ const entryConfiguration = {
       ["symptoms", "常见症状", "textarea"],
       ["treatment", "通用处理建议", "textarea"],
       ["source", "资料来源", "input"],
+      ["source_url", "来源链接（可选）", "input", "url"],
       ["source_tier", "可信度等级", "select"],
     ],
   },
@@ -95,6 +99,7 @@ const entryConfiguration = {
       ["effects", "药物作用", "textarea"],
       ["instructions", "使用说明", "textarea"],
       ["source", "资料来源", "input"],
+      ["source_url", "来源链接（可选）", "input", "url"],
       ["source_tier", "可信度等级", "select"],
     ],
   },
@@ -104,6 +109,7 @@ const entryConfiguration = {
     fields: [
       ["title", "资料标题", "input"],
       ["source", "资料来源", "input"],
+      ["source_url", "来源链接（可选）", "input", "url"],
       ["source_tier", "可信度等级", "select"],
       ["content", "资料内容", "textarea"],
     ],
@@ -111,6 +117,7 @@ const entryConfiguration = {
 };
 
 let activeEdit = null;
+const selectedReviewTargets = new Map();
 
 const ACTIVE_CONVERSATION_KEY = "medical-health-active-conversation";
 let conversationId = localStorage.getItem(ACTIVE_CONVERSATION_KEY) || createConversationId();
@@ -142,6 +149,26 @@ function formatUpdatedAt(updatedAt) {
     hour: "2-digit",
     minute: "2-digit",
   }).format(parsed);
+}
+
+function isHttpSourceUrl(sourceUrl) {
+  try {
+    const parsed = new URL(sourceUrl);
+    return parsed.protocol === "http:" || parsed.protocol === "https:";
+  } catch (_error) {
+    return false;
+  }
+}
+
+function createSourceUrlLink(sourceUrl, label = "打开来源链接") {
+  if (!sourceUrl || !isHttpSourceUrl(sourceUrl)) return null;
+  const link = document.createElement("a");
+  link.className = "source-url-link";
+  link.href = sourceUrl;
+  link.target = "_blank";
+  link.rel = "noreferrer";
+  link.textContent = label;
+  return link;
 }
 
 function getKnowledgeTypeLabel(type) {
@@ -191,7 +218,10 @@ function appendReferences(message, references) {
     const item = referenceTemplate.content.cloneNode(true);
     item.querySelector(".reference-name").textContent = reference.name;
     item.querySelector(".reference-score").textContent = `相关度 ${Math.round(reference.relevance_score * 100)}%`;
-    item.querySelector(".reference-source").textContent = `来源：${reference.source || "未标注来源"}`;
+    const source = item.querySelector(".reference-source");
+    source.textContent = `来源：${reference.source || "未标注来源"}`;
+    const sourceUrlLink = createSourceUrlLink(reference.source_url);
+    if (sourceUrlLink) source.after(sourceUrlLink);
     const confidence = item.querySelector(".reference-confidence");
     confidence.textContent = `可信度：${getSourceTierLabel(reference.source_tier)} | 最后更新：${formatUpdatedAt(reference.updated_at)}`;
     if (reference.needs_review) {
@@ -239,6 +269,17 @@ function appendReferenceDetail(label, value) {
   referenceDetails.append(item);
 }
 
+function appendReferenceLinkDetail(label, sourceUrl) {
+  const link = createSourceUrlLink(sourceUrl, sourceUrl);
+  if (!link) return;
+  const item = document.createElement("div");
+  item.className = "reference-detail";
+  const heading = document.createElement("h3");
+  heading.textContent = label;
+  item.append(heading, link);
+  referenceDetails.append(item);
+}
+
 async function openReferenceDialog(reference) {
   const config = entryConfiguration[reference.type];
   if (!config || !Number.isInteger(reference.record_id)) {
@@ -256,6 +297,7 @@ async function openReferenceDialog(reference) {
   referenceDetails.innerHTML = "";
   appendReferenceDetail("资料类型", getKnowledgeTypeLabel(reference.type));
   appendReferenceDetail("资料来源", data.source);
+  appendReferenceLinkDetail("来源链接", data.source_url);
   appendReferenceDetail("可信度等级", getSourceTierLabel(data.source_tier));
   appendReferenceDetail("最后更新", formatUpdatedAt(data.updated_at));
   if (knowledgeStatusData?.is_current) {
@@ -1084,10 +1126,27 @@ function clearSearchResults() {
   searchResults.innerHTML = "";
 }
 
+function getReviewTargetKey(item) {
+  return `${item.type}:${item.record_id}`;
+}
+
+function syncReviewBatchControls() {
+  const selectedCount = selectedReviewTargets.size;
+  reviewBatchSubmitButton.disabled = selectedCount === 0;
+  reviewBatchSubmitButton.textContent = selectedCount === 0
+    ? "选择资料后批量审核"
+    : `批量审核已选 ${selectedCount} 条资料`;
+}
+
 function renderReviewQueue(data) {
   reviewResults.innerHTML = "";
+  const availableKeys = new Set(data.results.map(getReviewTargetKey));
+  for (const key of selectedReviewTargets.keys()) {
+    if (!availableKeys.has(key)) selectedReviewTargets.delete(key);
+  }
   if (data.results.length === 0) {
     reviewStatus.textContent = "目前没有待核验资料。";
+    syncReviewBatchControls();
     return;
   }
 
@@ -1102,10 +1161,28 @@ function renderReviewQueue(data) {
     const type = document.createElement("span");
     type.className = `type-chip ${item.type}`;
     type.textContent = getKnowledgeTypeLabel(item.type);
-    header.append(title, type);
+    const selectLabel = document.createElement("label");
+    selectLabel.className = "review-select";
+    const checkbox = document.createElement("input");
+    checkbox.type = "checkbox";
+    checkbox.checked = selectedReviewTargets.has(getReviewTargetKey(item));
+    checkbox.addEventListener("change", () => {
+      const key = getReviewTargetKey(item);
+      if (checkbox.checked) {
+        selectedReviewTargets.set(key, { type: item.type, record_id: item.record_id });
+      } else {
+        selectedReviewTargets.delete(key);
+      }
+      syncReviewBatchControls();
+    });
+    const selectText = document.createElement("span");
+    selectText.textContent = "选择";
+    selectLabel.append(checkbox, selectText);
+    header.append(title, type, selectLabel);
 
     const metadata = document.createElement("p");
     metadata.textContent = `来源：${item.source || "未标注来源"} | 可信度：${getSourceTierLabel(item.source_tier)} | 更新：${formatUpdatedAt(item.updated_at)}`;
+    const sourceUrlLink = createSourceUrlLink(item.source_url);
     const reasons = document.createElement("p");
     reasons.className = "review-reasons";
     reasons.textContent = `需处理：${item.review_reasons.join("；")}`;
@@ -1113,9 +1190,12 @@ function renderReviewQueue(data) {
     editButton.type = "button";
     editButton.textContent = "去补充来源";
     editButton.addEventListener("click", () => openEditDialog(item));
-    result.append(header, metadata, reasons, editButton);
+    result.append(header, metadata);
+    if (sourceUrlLink) result.append(sourceUrlLink);
+    result.append(reasons, editButton);
     reviewResults.append(result);
   }
+  syncReviewBatchControls();
 }
 
 async function loadReviewQueue() {
@@ -1133,6 +1213,43 @@ async function loadReviewQueue() {
     reviewStatus.textContent = `读取失败：${error.message}`;
   } finally {
     refreshReviewQueueButton.disabled = false;
+  }
+}
+
+async function submitReviewBatch(event) {
+  event.preventDefault();
+  if (selectedReviewTargets.size === 0) return;
+
+  const payload = {
+    ...Object.fromEntries(new FormData(reviewBatchForm).entries()),
+    targets: [...selectedReviewTargets.values()],
+  };
+  reviewBatchSubmitButton.disabled = true;
+  reviewBatchStatus.className = "review-batch-status";
+  reviewBatchStatus.textContent = "正在保存审核信息...";
+  try {
+    const response = await fetch("/knowledge/review-queue/batch-update", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    const data = await response.json();
+    if (!response.ok) throw new Error(getErrorMessage(data, "批量审核失败。"));
+    selectedReviewTargets.clear();
+    reviewBatchForm.reset();
+    reviewBatchForm.elements.source_tier.value = "professional";
+    reviewBatchStatus.textContent = `已保存 ${data.updated_count} 条资料的审核信息。知识库已变为待重建状态。`;
+    await Promise.all([
+      loadKnowledgeStatus(),
+      loadReviewQueue(),
+      loadKnowledgeVersions(),
+    ]);
+    if (searchInput.value.trim()) searchForm.requestSubmit();
+  } catch (error) {
+    reviewBatchStatus.className = "review-batch-status error";
+    reviewBatchStatus.textContent = `批量审核失败：${error.message}`;
+  } finally {
+    syncReviewBatchControls();
   }
 }
 
@@ -1250,6 +1367,7 @@ function renderSearchResults(data) {
     fields.textContent = `匹配字段：${item.matched_fields.join("、")} | 来源：${item.source || "未标注来源"} | 可信度：${getSourceTierLabel(item.source_tier)} | 更新：${formatUpdatedAt(item.updated_at)}${reviewNote}`;
     const excerpt = document.createElement("p");
     excerpt.textContent = item.excerpt;
+    const sourceUrlLink = createSourceUrlLink(item.source_url);
     const actions = document.createElement("div");
     actions.className = "result-actions";
     const editButton = document.createElement("button");
@@ -1261,7 +1379,9 @@ function renderSearchResults(data) {
     deleteButton.textContent = "删除";
     deleteButton.addEventListener("click", () => deleteKnowledgeEntry(item));
     actions.append(editButton, deleteButton);
-    result.append(header, fields, excerpt, actions);
+    result.append(header, fields, excerpt);
+    if (sourceUrlLink) result.append(sourceUrlLink);
+    result.append(actions);
     searchResults.append(result);
   }
 }
@@ -1365,12 +1485,13 @@ async function openEditDialog(item) {
     activeEdit = { id: item.record_id, type: item.type, config };
     editTitle.textContent = `编辑${config.label}：${data.name || data.title}`;
     editFields.innerHTML = "";
-    for (const [name, label, controlType] of config.fields) {
+    for (const [name, label, controlType, inputType] of config.fields) {
       const fieldLabel = document.createElement("label");
       fieldLabel.textContent = label;
       const control = document.createElement(controlType);
       control.name = name;
-      control.required = true;
+      control.required = name !== "source_url";
+      if (inputType) control.type = inputType;
       if (controlType === "select") {
         for (const [value, optionLabel] of SOURCE_TIER_OPTIONS) {
           const option = document.createElement("option");
@@ -1379,7 +1500,7 @@ async function openEditDialog(item) {
           control.append(option);
         }
       }
-      control.value = data[name];
+      control.value = data[name] || "";
       if (controlType === "textarea") control.rows = name === "content" ? 8 : 4;
       fieldLabel.append(control);
       editFields.append(fieldLabel);
@@ -1551,6 +1672,7 @@ exportConversationButton.addEventListener("click", exportConversation);
 refreshHistoryButton.addEventListener("click", loadConversationList);
 rebuildKnowledgeButton.addEventListener("click", rebuildKnowledge);
 refreshReviewQueueButton.addEventListener("click", loadReviewQueue);
+reviewBatchForm.addEventListener("submit", submitReviewBatch);
 refreshKnowledgeVersionsButton.addEventListener("click", loadKnowledgeVersions);
 runRagEvaluationButton.addEventListener("click", runRagEvaluation);
 compareRetrievalButton.addEventListener("click", compareRetrievalStrategies);

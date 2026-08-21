@@ -141,6 +141,7 @@ def build_references(relevant_matches: list[tuple[object, float]]) -> list[dict]
         metadata = document.metadata
         source_tier = str(metadata.get("source_tier", "unverified"))
         source = str(metadata.get("source", "未标注来源"))
+        source_url = str(metadata.get("source_url", "") or "")
         updated_at = parse_metadata_datetime(metadata.get("updated_at"))
         references.append(
             {
@@ -148,12 +149,18 @@ def build_references(relevant_matches: list[tuple[object, float]]) -> list[dict]
                 "type": metadata.get("type", "unknown"),
                 "record_id": metadata.get("record_id"),
                 "source": source,
+                "source_url": source_url or None,
                 "source_tier": source_tier,
                 "updated_at": updated_at,
                 "needs_review": bool(
                     metadata.get(
                         "needs_review",
-                        needs_source_review(source_tier, updated_at, source),
+                        needs_source_review(
+                            source_tier,
+                            updated_at,
+                            source,
+                            source_url,
+                        ),
                     )
                 ),
                 "excerpt": document.page_content.replace("\n", " ")[:180],

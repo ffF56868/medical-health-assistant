@@ -142,6 +142,7 @@ def update_document(
     document.title = document_data.title
     document.content = document_data.content
     document.source = document_data.source
+    document.source_url = document_data.source_url
     document.source_tier = document_data.source_tier
     document.updated_at = datetime.now(UTC)
     session.add(document)

@@ -91,6 +91,7 @@ def test_condition_can_be_created_and_listed(client):
             "symptoms": "测试症状",
             "treatment": "测试处理建议",
             "source": "测试卫生机构",
+            "source_url": "https://example.org/condition",
             "source_tier": "professional",
         },
     )
@@ -99,6 +100,7 @@ def test_condition_can_be_created_and_listed(client):
     list_response = client.get("/conditions", params={"keyword": "测试"})
     assert list_response.status_code == 200
     assert list_response.json()[0]["name"] == "测试病症"
+    assert list_response.json()[0]["source_url"] == "https://example.org/condition"
     assert list_response.json()[0]["source_tier"] == "professional"
     assert list_response.json()[0]["updated_at"] is not None
 
@@ -124,11 +126,13 @@ def test_existing_sqlite_data_receives_metadata_columns_without_data_loss():
             for row in connection.exec_driver_sql('PRAGMA table_info("condition")')
         }
         migrated_row = connection.exec_driver_sql(
-            'SELECT source, source_tier, updated_at FROM "condition" WHERE id = 1'
+            'SELECT source, source_url, source_tier, updated_at '
+            'FROM "condition" WHERE id = 1'
         ).one()
 
-    assert {"source", "source_tier", "updated_at"}.issubset(columns)
+    assert {"source", "source_url", "source_tier", "updated_at"}.issubset(columns)
     assert migrated_row.source == "未标注来源"
+    assert migrated_row.source_url is None
     assert migrated_row.source_tier == "unverified"
     assert migrated_row.updated_at is None
 
@@ -246,6 +250,7 @@ def test_review_queue_lists_only_knowledge_that_needs_human_review(client):
             "effects": "测试作用",
             "instructions": "测试说明",
             "source": "测试专业机构",
+            "source_url": "https://example.org/drug",
             "source_tier": "professional",
         },
     )
@@ -260,6 +265,72 @@ def test_review_queue_lists_only_knowledge_that_needs_human_review(client):
     assert data["results"][0]["title"] == "待核验病症"
     assert "可信度等级为待核实" in data["results"][0]["review_reasons"]
     assert "未标注具体资料来源" in data["results"][0]["review_reasons"]
+    assert "未提供可访问的来源链接" in data["results"][0]["review_reasons"]
+
+
+def test_source_url_must_be_an_http_address(client):
+    response = client.post(
+        "/conditions",
+        json={
+            "name": "错误链接病症",
+            "symptoms": "测试症状",
+            "treatment": "测试建议",
+            "source": "测试机构",
+            "source_url": "ftp://example.org/condition",
+            "source_tier": "professional",
+        },
+    )
+
+    assert response.status_code == 422
+    assert "来源链接必须是有效的 http:// 或 https:// 地址" in response.text
+
+
+def test_review_queue_batch_update_adds_verified_source_metadata(client):
+    condition = client.post(
+        "/conditions",
+        json={
+            "name": "批量审核病症",
+            "symptoms": "测试症状",
+            "treatment": "测试建议",
+        },
+    )
+    drug = client.post(
+        "/drugs",
+        json={
+            "name": "批量审核药物",
+            "effects": "测试作用",
+            "instructions": "测试说明",
+        },
+    )
+    assert condition.status_code == 201
+    assert drug.status_code == 201
+
+    response = client.post(
+        "/knowledge/review-queue/batch-update",
+        json={
+            "targets": [
+                {"type": "condition", "record_id": condition.json()["id"]},
+                {"type": "drug", "record_id": drug.json()["id"]},
+            ],
+            "source": "测试专业机构",
+            "source_url": "https://example.org/reviewed-source",
+            "source_tier": "professional",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["updated_count"] == 2
+    assert all(item["review_reasons"] == [] for item in response.json()["items"])
+    assert client.get(f"/conditions/{condition.json()['id']}").json()["source_url"] == (
+        "https://example.org/reviewed-source"
+    )
+    assert client.get(f"/drugs/{drug.json()['id']}").json()["source_tier"] == (
+        "professional"
+    )
+
+    queue = client.get("/knowledge/review-queue")
+    assert queue.status_code == 200
+    assert queue.json()["total_count"] == 0
 
 
 def test_knowledge_versions_can_restore_a_previous_snapshot(client, monkeypatch):
@@ -947,6 +1018,7 @@ def test_rag_keeps_the_best_chunk_and_returns_structured_references(
                         "record_id": 1,
                         "name": "睡眠健康提示",
                         "source": "测试文档",
+                        "source_url": "https://example.org/sleep",
                         "chunk_index": 0,
                     },
                 ),
@@ -960,6 +1032,7 @@ def test_rag_keeps_the_best_chunk_and_returns_structured_references(
                         "record_id": 1,
                         "name": "睡眠健康提示",
                         "source": "测试文档",
+                        "source_url": "https://example.org/sleep",
                         "chunk_index": 1,
                     },
                 ),
@@ -1004,6 +1077,7 @@ def test_rag_keeps_the_best_chunk_and_returns_structured_references(
     assert data["references"][1]["record_id"] == 2
     assert "高分切块" in data["references"][0]["excerpt"]
     assert data["references"][0]["source"] == "测试文档"
+    assert data["references"][0]["source_url"] == "https://example.org/sleep"
     assert data["references"][0]["source_tier"] == "unverified"
     assert data["references"][0]["needs_review"] is True
     assert data["processing_path"] == "rag-vector-retrieval"

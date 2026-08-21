@@ -82,6 +82,7 @@ def update_drug(
     drug.effects = drug_data.effects
     drug.instructions = drug_data.instructions
     drug.source = drug_data.source
+    drug.source_url = drug_data.source_url
     drug.source_tier = drug_data.source_tier
     drug.updated_at = datetime.now(UTC)
     session.add(drug)

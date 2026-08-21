@@ -72,6 +72,15 @@
               <button class="secondary-button" id="refresh-review-queue" type="button">刷新列表</button>
             </div>
             <p class="review-status" id="review-status" aria-live="polite"></p>
+            <form class="review-batch-form" id="review-batch-form">
+              <div class="review-batch-fields">
+                <label>审核来源<input id="review-batch-source" name="source" maxlength="200" placeholder="例如：国家卫生健康委员会" required /></label>
+                <label>来源链接<input id="review-batch-source-url" name="source_url" type="url" maxlength="2000" placeholder="https://..." required /></label>
+                <label>可信度等级<select id="review-batch-source-tier" name="source_tier" required><option value="authority">权威机构</option><option value="professional" selected>专业机构</option><option value="general">一般资料</option></select></label>
+              </div>
+              <button id="review-batch-submit" type="submit" disabled>选择资料后批量审核</button>
+            </form>
+            <p class="review-batch-status" id="review-batch-status" aria-live="polite"></p>
             <div class="review-results" id="review-results"></div>
           </section>
 
@@ -102,6 +111,7 @@
               <label>常见症状<textarea name="symptoms" rows="4" maxlength="5000" required></textarea></label>
               <label>通用处理建议<textarea name="treatment" rows="4" maxlength="5000" required></textarea></label>
               <label>资料来源<input name="source" maxlength="200" value="未标注来源" required /></label>
+              <label>来源链接（可选）<input name="source_url" type="url" maxlength="2000" placeholder="https://..." /></label>
               <label>可信度等级<select name="source_tier" required><option value="authority">权威机构</option><option value="professional">专业机构</option><option value="general">一般资料</option><option value="unverified" selected>待核实</option></select></label>
               <button type="submit">保存病症</button>
             </form>
@@ -112,6 +122,7 @@
               <label>药物作用<textarea name="effects" rows="4" maxlength="5000" required></textarea></label>
               <label>使用说明<textarea name="instructions" rows="4" maxlength="5000" required></textarea></label>
               <label>资料来源<input name="source" maxlength="200" value="未标注来源" required /></label>
+              <label>来源链接（可选）<input name="source_url" type="url" maxlength="2000" placeholder="https://..." /></label>
               <label>可信度等级<select name="source_tier" required><option value="authority">权威机构</option><option value="professional">专业机构</option><option value="general">一般资料</option><option value="unverified" selected>待核实</option></select></label>
               <button type="submit">保存药物</button>
             </form>
@@ -120,6 +131,7 @@
               <div class="form-heading"><span class="type-chip document">资料</span><h3>添加手写资料</h3></div>
               <label>资料标题<input name="title" maxlength="200" required /></label>
               <label>资料来源<input name="source" maxlength="200" value="未标注来源" required /></label>
+              <label>来源链接（可选）<input name="source_url" type="url" maxlength="2000" placeholder="https://..." /></label>
               <label>可信度等级<select name="source_tier" required><option value="authority">权威机构</option><option value="professional">专业机构</option><option value="general">一般资料</option><option value="unverified" selected>待核实</option></select></label>
               <label>资料内容<textarea name="content" rows="7" maxlength="20000" required></textarea></label>
               <button type="submit">保存资料</button>

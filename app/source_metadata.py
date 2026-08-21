@@ -28,10 +28,13 @@ def get_source_review_reasons(
     source: str | None,
     source_tier: str | None,
     updated_at: datetime | None,
+    source_url: str | None = None,
 ) -> list[str]:
     reasons: list[str] = []
     if (source or "").strip() in PLACEHOLDER_SOURCES:
         reasons.append("未标注具体资料来源")
+    if not (source_url or "").strip():
+        reasons.append("未提供可访问的来源链接")
     if source_tier not in SOURCE_TIERS or source_tier == "unverified":
         reasons.append("可信度等级为待核实")
 
@@ -47,5 +50,8 @@ def needs_source_review(
     source_tier: str | None,
     updated_at: datetime | None,
     source: str | None = None,
+    source_url: str | None = None,
 ) -> bool:
-    return bool(get_source_review_reasons(source, source_tier, updated_at))
+    return bool(
+        get_source_review_reasons(source, source_tier, updated_at, source_url)
+    )

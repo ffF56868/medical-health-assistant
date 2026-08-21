@@ -18,15 +18,18 @@ engine = create_engine(
 SQLITE_COLUMN_MIGRATIONS = {
     "condition": {
         "source": "VARCHAR(200) NOT NULL DEFAULT '未标注来源'",
+        "source_url": "TEXT",
         "source_tier": "VARCHAR(20) NOT NULL DEFAULT 'unverified'",
         "updated_at": "DATETIME",
     },
     "drug": {
         "source": "VARCHAR(200) NOT NULL DEFAULT '未标注来源'",
+        "source_url": "TEXT",
         "source_tier": "VARCHAR(20) NOT NULL DEFAULT 'unverified'",
         "updated_at": "DATETIME",
     },
     "knowledgedocument": {
+        "source_url": "TEXT",
         "source_tier": "VARCHAR(20) NOT NULL DEFAULT 'unverified'",
         "updated_at": "DATETIME",
     },

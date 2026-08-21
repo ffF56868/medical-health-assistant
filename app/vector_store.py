@@ -68,13 +68,20 @@ def get_vector_store() -> Chroma:
 
 def build_source_metadata(record: object) -> dict[str, str | bool]:
     source = str(getattr(record, "source", "未标注来源") or "未标注来源")
+    source_url = str(getattr(record, "source_url", "") or "")
     source_tier = str(getattr(record, "source_tier", "unverified") or "unverified")
     updated_at = getattr(record, "updated_at", None)
     return {
         "source": source,
+        "source_url": source_url,
         "source_tier": source_tier,
         "updated_at": updated_at.isoformat() if updated_at else "",
-        "needs_review": needs_source_review(source_tier, updated_at, source),
+        "needs_review": needs_source_review(
+            source_tier,
+            updated_at,
+            source,
+            source_url,
+        ),
     }
 
 
@@ -90,6 +97,7 @@ def build_knowledge_documents(session: Session) -> list[Document]:
                     f"常见症状：{condition.symptoms}\n"
                     f"处理建议：{condition.treatment}\n"
                     f"资料来源：{condition.source}\n"
+                    f"来源链接：{condition.source_url or '未提供'}\n"
                     f"可信度：{get_source_tier_label(condition.source_tier)}\n"
                     f"最后更新：{condition.updated_at.isoformat() if condition.updated_at else '未记录'}"
                 ),
@@ -111,6 +119,7 @@ def build_knowledge_documents(session: Session) -> list[Document]:
                     f"药物作用：{drug.effects}\n"
                     f"使用说明：{drug.instructions}\n"
                     f"资料来源：{drug.source}\n"
+                    f"来源链接：{drug.source_url or '未提供'}\n"
                     f"可信度：{get_source_tier_label(drug.source_tier)}\n"
                     f"最后更新：{drug.updated_at.isoformat() if drug.updated_at else '未记录'}"
                 ),
@@ -132,6 +141,7 @@ def build_knowledge_documents(session: Session) -> list[Document]:
                 page_content=(
                     f"资料标题：{knowledge_document.title}\n"
                     f"资料来源：{knowledge_document.source}\n"
+                    f"来源链接：{knowledge_document.source_url or '未提供'}\n"
                     f"可信度：{get_source_tier_label(knowledge_document.source_tier)}\n"
                     f"最后更新：{knowledge_document.updated_at.isoformat() if knowledge_document.updated_at else '未记录'}\n"
                     f"资料内容：{knowledge_document.content}"

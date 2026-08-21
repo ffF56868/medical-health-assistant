@@ -1,6 +1,7 @@
 from datetime import datetime
+from urllib.parse import urlparse
 
-from pydantic import field_validator
+from pydantic import field_validator, model_validator
 from sqlmodel import Field, SQLModel
 
 from app.source_metadata import SOURCE_TIERS
@@ -19,11 +20,27 @@ def validate_source_tier(value: str) -> str:
     return normalized_value
 
 
+def normalize_source_url(value: str | None) -> str | None:
+    if value is None:
+        return None
+    normalized_value = value.strip()
+    if not normalized_value:
+        return None
+    parsed_url = urlparse(normalized_value)
+    if parsed_url.scheme not in {"http", "https"} or not parsed_url.netloc:
+        raise ValueError("来源链接必须是有效的 http:// 或 https:// 地址")
+    return normalized_value
+
+
 class SourceMetadataCreate(SQLModel):
     source: str = Field(default="未标注来源", min_length=1, max_length=200)
+    source_url: str | None = Field(default=None, max_length=2000)
     source_tier: str = Field(default="unverified", min_length=1, max_length=20)
 
     _strip_source = field_validator("source", mode="before")(strip_required_text)
+    _normalize_source_url = field_validator("source_url", mode="before")(
+        normalize_source_url
+    )
     _validate_source_tier = field_validator("source_tier", mode="before")(
         validate_source_tier
     )
@@ -91,6 +108,13 @@ def validate_knowledge_type(value: str) -> str:
     return normalized_value
 
 
+def validate_concrete_knowledge_type(value: str) -> str:
+    normalized_value = validate_knowledge_type(value)
+    if normalized_value == "all":
+        raise ValueError("资料类型必须是 condition、drug 或 document")
+    return normalized_value
+
+
 def validate_source_filter(value: str) -> str:
     normalized_value = strip_required_text(value)
     if normalized_value not in SOURCE_FILTERS:
@@ -123,6 +147,7 @@ class ReferenceRead(SQLModel):
     type: str
     record_id: int | None = None
     source: str | None = None
+    source_url: str | None = None
     source_tier: str = "unverified"
     updated_at: datetime | None = None
     needs_review: bool = True
@@ -216,6 +241,7 @@ class KnowledgeSearchItem(SQLModel):
     record_id: int
     title: str
     source: str | None = None
+    source_url: str | None = None
     source_tier: str = "unverified"
     updated_at: datetime | None = None
     needs_review: bool = True
@@ -234,6 +260,7 @@ class KnowledgeReviewItem(SQLModel):
     record_id: int
     title: str
     source: str
+    source_url: str | None = None
     source_tier: str
     updated_at: datetime | None = None
     review_reasons: list[str] = Field(default_factory=list)
@@ -242,6 +269,44 @@ class KnowledgeReviewItem(SQLModel):
 class KnowledgeReviewResponse(SQLModel):
     total_count: int
     results: list[KnowledgeReviewItem] = Field(default_factory=list)
+
+
+class KnowledgeReviewTarget(SQLModel):
+    type: str = Field(min_length=1, max_length=20)
+    record_id: int = Field(gt=0)
+
+    _validate_type = field_validator("type", mode="before")(
+        validate_concrete_knowledge_type
+    )
+
+
+class KnowledgeReviewBatchUpdate(SQLModel):
+    targets: list[KnowledgeReviewTarget] = Field(min_length=1, max_length=100)
+    source: str = Field(min_length=1, max_length=200)
+    source_url: str = Field(min_length=1, max_length=2000)
+    source_tier: str = Field(min_length=1, max_length=20)
+
+    _strip_source = field_validator("source", mode="before")(strip_required_text)
+    _normalize_source_url = field_validator("source_url", mode="before")(
+        normalize_source_url
+    )
+    _validate_source_tier = field_validator("source_tier", mode="before")(
+        validate_source_tier
+    )
+
+    @model_validator(mode="after")
+    def validate_reviewed_targets(self):
+        if self.source_tier == "unverified":
+            raise ValueError("批量审核不能把资料标记为待核实")
+        target_keys = {(target.type, target.record_id) for target in self.targets}
+        if len(target_keys) != len(self.targets):
+            raise ValueError("不能重复选择同一条资料")
+        return self
+
+
+class KnowledgeReviewBatchUpdateResponse(SQLModel):
+    updated_count: int
+    items: list[KnowledgeReviewItem] = Field(default_factory=list)
 
 
 class RAGEvaluationCaseResult(SQLModel):
