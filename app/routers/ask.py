@@ -13,13 +13,15 @@ from app.database import get_session
 from app.models import ChatMessage
 from app.schemas import AskRequest, AskResponse
 from app.source_metadata import needs_source_review
-from app.vector_store import get_knowledge_status, get_vector_store
+from app.vector_store import (
+    RAG_RETRIEVAL_FETCH_COUNT,
+    get_knowledge_status,
+    get_vector_store,
+    select_distinct_relevant_matches,
+)
 
 
 router = APIRouter(prefix="/ask", tags=["ask"])
-# Multi-symptom questions often spread their similarity across several records.
-# Scores below 0.2 have been checked to be unrelated to this knowledge base.
-MIN_RELEVANCE_SCORE = 0.2
 URGENT_WARNING_KEYWORDS = (
     "呼吸困难",
     "持续胸痛",
@@ -210,7 +212,7 @@ def ask_question(
         vector_store = get_vector_store()
         matches = vector_store.similarity_search_with_relevance_scores(
             retrieval_query,
-            k=8,
+            k=RAG_RETRIEVAL_FETCH_COUNT,
         )
     except Exception as error:
         raise HTTPException(
@@ -218,24 +220,7 @@ def ask_question(
             detail="知识库暂时不可用，请确认已执行 /knowledge/rebuild",
         ) from error
 
-    # Each source may have several chunks. Keep only its best matching chunk.
-    best_matches: dict[tuple[str, str], tuple[object, float]] = {}
-    for document, score in matches:
-        if score < MIN_RELEVANCE_SCORE:
-            continue
-        source_key = (
-            str(document.metadata.get("type", "unknown")),
-            str(document.metadata.get("record_id", document.metadata.get("name"))),
-        )
-        previous_match = best_matches.get(source_key)
-        if previous_match is None or score > previous_match[1]:
-            best_matches[source_key] = (document, score)
-
-    relevant_matches = sorted(
-        best_matches.values(),
-        key=lambda item: item[1],
-        reverse=True,
-    )[:3]
+    relevant_matches = select_distinct_relevant_matches(matches)
     relevant_documents = [document for document, _ in relevant_matches]
 
     if not relevant_documents:
@@ -421,7 +406,7 @@ def stream_answer(
         vector_store = get_vector_store()
         matches = vector_store.similarity_search_with_relevance_scores(
             retrieval_query,
-            k=8,
+            k=RAG_RETRIEVAL_FETCH_COUNT,
         )
     except Exception as error:
         raise HTTPException(
@@ -429,23 +414,7 @@ def stream_answer(
             detail="知识库暂时不可用，请确认已执行 /knowledge/rebuild",
         ) from error
 
-    best_matches: dict[tuple[str, str], tuple[object, float]] = {}
-    for document, score in matches:
-        if score < MIN_RELEVANCE_SCORE:
-            continue
-        source_key = (
-            str(document.metadata.get("type", "unknown")),
-            str(document.metadata.get("record_id", document.metadata.get("name"))),
-        )
-        previous_match = best_matches.get(source_key)
-        if previous_match is None or score > previous_match[1]:
-            best_matches[source_key] = (document, score)
-
-    relevant_matches = sorted(
-        best_matches.values(),
-        key=lambda item: item[1],
-        reverse=True,
-    )[:3]
+    relevant_matches = select_distinct_relevant_matches(matches)
     relevant_documents = [document for document, _ in relevant_matches]
 
     if not relevant_documents:

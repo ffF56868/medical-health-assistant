@@ -258,9 +258,29 @@ h2 { font-size: 20px; margin: 0; }
 
 .evaluation-heading { align-items: center; display: flex; gap: 16px; justify-content: space-between; }
 
+.evaluation-actions { display: flex; flex-wrap: wrap; gap: 8px; justify-content: flex-end; }
+
 .evaluation-heading .eyebrow { margin: 0 0 3px; }
 
 .evaluation-heading h3 { font-size: 16px; margin: 0; }
+
+.custom-evaluation-form { align-items: end; display: grid; gap: 10px; grid-template-columns: minmax(220px, 2fr) minmax(160px, 1fr) minmax(120px, 0.7fr) auto; margin-top: 16px; }
+
+.custom-evaluation-form label { color: #526166; display: grid; font-size: 13px; gap: 5px; }
+
+.custom-evaluation-form textarea { min-height: 66px; resize: vertical; }
+
+.custom-evaluation-form input, .custom-evaluation-form select, .custom-evaluation-form textarea { background: #fff; border: 1px solid #b9ccca; border-radius: 4px; color: #1e3034; font: inherit; padding: 8px; }
+
+.custom-evaluation-form button { align-self: end; }
+
+.custom-evaluation-status { color: #526166; font-size: 13px; min-height: 20px; margin: 11px 0 0; }
+
+.custom-evaluation-list { display: grid; gap: 7px; margin-top: 8px; }
+
+.custom-evaluation-item { align-items: center; background: #f6f9f8; border: 1px solid #dce4e5; display: flex; gap: 12px; justify-content: space-between; padding: 8px 10px; }
+
+.custom-evaluation-item p { color: #43575b; font-size: 13px; line-height: 1.5; margin: 0; }
 
 .evaluation-status { color: #526166; font-size: 13px; min-height: 20px; margin: 14px 0 0; }
 
@@ -281,6 +301,48 @@ h2 { font-size: 20px; margin: 0; }
 .evaluation-result p { color: #526166; font-size: 13px; line-height: 1.55; margin: 4px 0 0; }
 
 .evaluation-result.failed p { color: #8b4b10; }
+
+.retrieval-comparison { border-top: 1px solid #dce4e5; margin-top: 18px; padding-top: 14px; }
+
+.retrieval-comparison h4 { color: #254b4d; font-size: 14px; margin: 0; }
+
+.comparison-status { color: #526166; font-size: 13px; min-height: 20px; margin: 8px 0 0; }
+
+.comparison-status.error { color: #9c3024; }
+
+.comparison-metrics { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+
+.comparison-results { display: grid; gap: 8px; margin-top: 12px; }
+
+.comparison-result { border-left: 3px solid #86aaa6; padding: 7px 0 7px 10px; }
+
+.comparison-result.improved { border-left-color: #387f5e; }
+
+.comparison-result.regressed { border-left-color: #c1543f; }
+
+.comparison-result h5 { color: #254b4d; font-size: 14px; margin: 0; }
+
+.comparison-result p { color: #526166; font-size: 13px; line-height: 1.55; margin: 3px 0 0; }
+
+.comparison-result .comparison-change { color: #315b5d; font-weight: 700; }
+
+.comparison-result.regressed .comparison-change { color: #9c3024; }
+
+.evaluation-history { border-top: 1px solid #dce4e5; margin-top: 18px; padding-top: 14px; }
+
+.evaluation-history-heading { align-items: center; display: flex; justify-content: space-between; }
+
+.evaluation-history-heading h4 { color: #254b4d; font-size: 14px; margin: 0; }
+
+.evaluation-history-status { color: #526166; font-size: 13px; min-height: 20px; margin: 8px 0 0; }
+
+.evaluation-history-list { display: grid; gap: 7px; margin-top: 8px; }
+
+.evaluation-history-item { background: #f6f9f8; border: 1px solid #dce4e5; padding: 8px 10px; }
+
+.evaluation-history-item p { color: #315b5d; font-size: 13px; line-height: 1.5; margin: 0; }
+
+.evaluation-history-item .evaluation-history-detail { color: #607176; font-size: 12px; margin-top: 3px; }
 
 .welcome-message, .message { border-radius: 6px; line-height: 1.65; max-width: 720px; padding: 16px 18px; }
 
@@ -358,6 +420,11 @@ h2 { font-size: 20px; margin: 0; }
   .manager-grid { grid-template-columns: 1fr; }
   .metric-grid, .dashboard-grid { grid-template-columns: 1fr; }
   .knowledge-search { flex-direction: column; }
+  .evaluation-heading { align-items: flex-start; flex-direction: column; }
+  .evaluation-actions { justify-content: flex-start; width: 100%; }
+  .custom-evaluation-form { align-items: stretch; grid-template-columns: 1fr; }
+  .custom-evaluation-form button { align-self: stretch; }
+  .custom-evaluation-item { align-items: flex-start; flex-direction: column; }
   .upload-form { align-items: stretch; grid-template-columns: 1fr; }
   .composer { padding: 14px 16px; }
 }

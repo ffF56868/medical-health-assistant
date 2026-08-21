@@ -169,11 +169,46 @@
                 <p class="eyebrow">检索评测</p>
                 <h3 id="evaluation-title">RAG 基准评测</h3>
               </div>
-              <button class="secondary-button" id="run-rag-evaluation" type="button">运行评测</button>
+              <div class="evaluation-actions">
+                <button class="secondary-button" id="compare-retrieval" type="button">对比新旧检索</button>
+                <button class="secondary-button" id="run-rag-evaluation" type="button">运行全部评测</button>
+              </div>
             </div>
+            <form class="custom-evaluation-form" id="custom-evaluation-form">
+              <label for="evaluation-question">测试问题
+                <textarea id="evaluation-question" rows="2" maxlength="1000" placeholder="例如：布洛芬有什么作用？" required></textarea>
+              </label>
+              <label for="evaluation-expected-name">期望命中的资料名称
+                <input id="evaluation-expected-name" maxlength="200" placeholder="例如：布洛芬" required />
+              </label>
+              <label for="evaluation-expected-type">资料类型
+                <select id="evaluation-expected-type" required>
+                  <option value="condition">病症</option>
+                  <option value="drug">药物</option>
+                  <option value="document">知识资料</option>
+                </select>
+              </label>
+              <button type="submit">添加自定义题</button>
+            </form>
+            <p class="custom-evaluation-status" id="custom-evaluation-status" aria-live="polite"></p>
+            <div class="custom-evaluation-list" id="custom-evaluation-list"></div>
             <p class="evaluation-status" id="evaluation-status" aria-live="polite"></p>
             <div class="evaluation-metrics" id="evaluation-metrics"></div>
             <div class="evaluation-results" id="evaluation-results"></div>
+            <section class="retrieval-comparison" aria-labelledby="retrieval-comparison-title">
+              <h4 id="retrieval-comparison-title">新旧检索结果</h4>
+              <p class="comparison-status" id="comparison-status" aria-live="polite"></p>
+              <div class="comparison-metrics" id="comparison-metrics"></div>
+              <div class="comparison-results" id="comparison-results"></div>
+            </section>
+            <section class="evaluation-history" aria-labelledby="evaluation-history-title">
+              <div class="evaluation-history-heading">
+                <h4 id="evaluation-history-title">最近评测记录</h4>
+                <button class="text-button" id="refresh-evaluation-history" type="button">刷新历史</button>
+              </div>
+              <p class="evaluation-history-status" id="evaluation-history-status" aria-live="polite"></p>
+              <div class="evaluation-history-list" id="evaluation-history-list"></div>
+            </section>
           </section>
         </section>
 

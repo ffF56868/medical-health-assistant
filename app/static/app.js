@@ -37,9 +37,22 @@ const versionStatus = document.querySelector("#version-status");
 const versionResults = document.querySelector("#version-results");
 const refreshKnowledgeVersionsButton = document.querySelector("#refresh-knowledge-versions");
 const runRagEvaluationButton = document.querySelector("#run-rag-evaluation");
+const compareRetrievalButton = document.querySelector("#compare-retrieval");
 const evaluationStatus = document.querySelector("#evaluation-status");
 const evaluationMetrics = document.querySelector("#evaluation-metrics");
 const evaluationResults = document.querySelector("#evaluation-results");
+const refreshEvaluationHistoryButton = document.querySelector("#refresh-evaluation-history");
+const evaluationHistoryStatus = document.querySelector("#evaluation-history-status");
+const evaluationHistoryList = document.querySelector("#evaluation-history-list");
+const customEvaluationForm = document.querySelector("#custom-evaluation-form");
+const customEvaluationQuestion = document.querySelector("#evaluation-question");
+const customEvaluationExpectedName = document.querySelector("#evaluation-expected-name");
+const customEvaluationExpectedType = document.querySelector("#evaluation-expected-type");
+const customEvaluationStatus = document.querySelector("#custom-evaluation-status");
+const customEvaluationList = document.querySelector("#custom-evaluation-list");
+const comparisonStatus = document.querySelector("#comparison-status");
+const comparisonMetrics = document.querySelector("#comparison-metrics");
+const comparisonResults = document.querySelector("#comparison-results");
 
 const SOURCE_TIER_OPTIONS = [
   ["authority", "权威机构"],
@@ -423,7 +436,11 @@ function setFeedbackDashboardVisible(visible) {
   form.classList.toggle("is-hidden", visible);
   feedbackDashboardToggle.textContent = visible ? "返回问答" : "质量面板";
   managerToggleButton.textContent = "管理资料";
-  if (visible) loadFeedbackDashboard();
+  if (visible) {
+    loadFeedbackDashboard();
+    loadCustomEvaluationCases();
+    loadEvaluationHistory();
+  }
 }
 
 function getErrorMessage(data, fallback) {
@@ -529,6 +546,8 @@ function renderRagEvaluation(data) {
   const metrics = [
     ["通过", `${data.passed_count} / ${data.total_count}`],
     ["命中率", `${Math.round(data.pass_rate * 100)}%`],
+    ["默认题", data.preset_count],
+    ["自定义题", data.custom_count],
   ];
   for (const [label, value] of metrics) {
     const metric = document.createElement("div");
@@ -558,9 +577,168 @@ function renderRagEvaluation(data) {
   }
 }
 
+function getStrategyResultText(result) {
+  const expectedRank = result.expected_rank;
+  if (result.passed) {
+    return `命中第 ${expectedRank} 条`;
+  }
+  if (!result.top_name) return "未检索到结果";
+  return `未命中，首位为${getKnowledgeTypeLabel(result.top_type)}“${result.top_name}”`;
+}
+
+function renderRetrievalComparison(data) {
+  comparisonMetrics.innerHTML = "";
+  const metrics = [
+    ["旧策略", `${data.baseline.passed_count} / ${data.total_count} (${Math.round(data.baseline.pass_rate * 100)}%)`],
+    ["新策略", `${data.current.passed_count} / ${data.total_count} (${Math.round(data.current.pass_rate * 100)}%)`],
+    ["命中率变化", `${data.pass_rate_delta >= 0 ? "+" : ""}${Math.round(data.pass_rate_delta * 100)}%`],
+    ["提升题目", data.improved_count],
+    ["回退题目", data.regressed_count],
+  ];
+  for (const [label, value] of metrics) {
+    const metric = document.createElement("div");
+    metric.className = "evaluation-metric";
+    metric.textContent = `${label}：${value}`;
+    comparisonMetrics.append(metric);
+  }
+
+  comparisonResults.innerHTML = "";
+  for (const result of data.results) {
+    const item = document.createElement("article");
+    item.className = `comparison-result ${result.change}`;
+    const title = document.createElement("h5");
+    title.textContent = result.question;
+    const oldResult = document.createElement("p");
+    oldResult.textContent = `旧：${getStrategyResultText(result.baseline)}`;
+    const newResult = document.createElement("p");
+    newResult.textContent = `新：${getStrategyResultText(result.current)}`;
+    const change = document.createElement("p");
+    change.className = "comparison-change";
+    change.textContent = ({ improved: "提升", regressed: "回退", unchanged: "不变" })[result.change];
+    item.append(title, oldResult, newResult, change);
+    comparisonResults.append(item);
+  }
+}
+
+function renderCustomEvaluationCases(data) {
+  customEvaluationList.innerHTML = "";
+  if (data.cases.length === 0) {
+    customEvaluationStatus.textContent = "还没有自定义题。可从你最常问、最希望检索正确的问题开始添加。";
+    return;
+  }
+
+  customEvaluationStatus.textContent = `已保存 ${data.total_count} 道自定义题，运行全部评测时会一并检查。`;
+  for (const item of data.cases) {
+    const row = document.createElement("article");
+    row.className = "custom-evaluation-item";
+    const text = document.createElement("p");
+    text.textContent = `问题：${item.question}｜目标${getKnowledgeTypeLabel(item.expected_type)}：${item.expected_name}`;
+    const removeButton = document.createElement("button");
+    removeButton.className = "text-button danger-button";
+    removeButton.type = "button";
+    removeButton.textContent = "删除";
+    removeButton.addEventListener("click", () => deleteCustomEvaluationCase(item.id));
+    row.append(text, removeButton);
+    customEvaluationList.append(row);
+  }
+}
+
+function formatEvaluationTime(value) {
+  return new Date(value).toLocaleString("zh-CN", {
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
+function renderEvaluationHistory(data) {
+  evaluationHistoryList.innerHTML = "";
+  if (data.runs.length === 0) {
+    evaluationHistoryStatus.textContent = "还没有评测历史。运行一次评测后会自动保存。";
+    return;
+  }
+
+  evaluationHistoryStatus.textContent = `共保存 ${data.total_count} 次评测，显示最近 ${data.runs.length} 次。`;
+  for (const run of data.runs) {
+    const item = document.createElement("article");
+    item.className = "evaluation-history-item";
+    const summary = document.createElement("p");
+    summary.textContent = `${formatEvaluationTime(run.created_at)}｜通过 ${run.passed_count} / ${run.total_count}｜命中率 ${Math.round(run.pass_rate * 100)}%`;
+    const detail = document.createElement("p");
+    detail.className = "evaluation-history-detail";
+    detail.textContent = `默认题 ${run.preset_count} 道，自定义题 ${run.custom_count} 道，知识库资料 ${run.knowledge_document_count} 条`;
+    item.append(summary, detail);
+    evaluationHistoryList.append(item);
+  }
+}
+
+async function loadEvaluationHistory() {
+  evaluationHistoryStatus.textContent = "正在读取评测历史...";
+  try {
+    const response = await fetch("/evaluation/history?limit=10");
+    const data = await response.json();
+    if (!response.ok) throw new Error(getErrorMessage(data, "读取评测历史失败。"));
+    renderEvaluationHistory(data);
+  } catch (error) {
+    evaluationHistoryStatus.textContent = `读取失败：${error.message}`;
+  }
+}
+
+async function loadCustomEvaluationCases() {
+  customEvaluationStatus.textContent = "正在读取自定义评测题...";
+  try {
+    const response = await fetch("/evaluation/cases");
+    const data = await response.json();
+    if (!response.ok) throw new Error(getErrorMessage(data, "读取自定义评测题失败。"));
+    renderCustomEvaluationCases(data);
+  } catch (error) {
+    customEvaluationStatus.textContent = `读取失败：${error.message}`;
+  }
+}
+
+async function addCustomEvaluationCase(event) {
+  event.preventDefault();
+  const payload = {
+    question: customEvaluationQuestion.value,
+    expected_name: customEvaluationExpectedName.value,
+    expected_type: customEvaluationExpectedType.value,
+  };
+  customEvaluationStatus.textContent = "正在保存自定义题...";
+  try {
+    const response = await fetch("/evaluation/cases", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    const data = await response.json();
+    if (!response.ok) throw new Error(getErrorMessage(data, "保存自定义题失败。"));
+    customEvaluationForm.reset();
+    await loadCustomEvaluationCases();
+  } catch (error) {
+    customEvaluationStatus.textContent = `保存失败：${error.message}`;
+  }
+}
+
+async function deleteCustomEvaluationCase(caseId) {
+  if (!window.confirm("删除这道自定义评测题吗？")) return;
+  customEvaluationStatus.textContent = "正在删除自定义题...";
+  try {
+    const response = await fetch(`/evaluation/cases/${caseId}`, { method: "DELETE" });
+    if (!response.ok) {
+      const data = await response.json();
+      throw new Error(getErrorMessage(data, "删除自定义题失败。"));
+    }
+    await loadCustomEvaluationCases();
+  } catch (error) {
+    customEvaluationStatus.textContent = `删除失败：${error.message}`;
+  }
+}
+
 async function runRagEvaluation() {
   const confirmed = window.confirm(
-    "将运行 4 个固定检索问题，只调用 Embedding，不生成模型回答，可能消耗少量额度。确定继续吗？",
+    "将运行默认题和你保存的自定义题，只调用 Embedding，不生成模型回答，可能消耗少量额度。确定继续吗？",
   );
   if (!confirmed) return;
 
@@ -575,13 +753,41 @@ async function runRagEvaluation() {
     const data = await response.json();
     if (!response.ok) throw new Error(getErrorMessage(data, "评测失败。"));
     renderRagEvaluation(data);
+    await loadEvaluationHistory();
     evaluationStatus.textContent = "评测完成。通过表示目标资料进入检索结果前 3 条。";
   } catch (error) {
     evaluationStatus.className = "evaluation-status error";
     evaluationStatus.textContent = `评测失败：${error.message}`;
   } finally {
     runRagEvaluationButton.disabled = false;
-    runRagEvaluationButton.textContent = "运行评测";
+    runRagEvaluationButton.textContent = "运行全部评测";
+  }
+}
+
+async function compareRetrievalStrategies() {
+  const confirmed = window.confirm(
+    "将用默认题和自定义题分别执行旧、新检索策略，只调用 Embedding，不生成模型回答，可能消耗少量额度。确定继续吗？",
+  );
+  if (!confirmed) return;
+
+  compareRetrievalButton.disabled = true;
+  compareRetrievalButton.textContent = "正在对比...";
+  comparisonStatus.className = "comparison-status";
+  comparisonStatus.textContent = "正在对比原始前 3 切块与当前检索策略...";
+  comparisonMetrics.innerHTML = "";
+  comparisonResults.innerHTML = "";
+  try {
+    const response = await fetch("/evaluation/compare", { method: "POST" });
+    const data = await response.json();
+    if (!response.ok) throw new Error(getErrorMessage(data, "检索对比失败。"));
+    renderRetrievalComparison(data);
+    comparisonStatus.textContent = "对比完成。新策略按资料去重并过滤低相关结果。";
+  } catch (error) {
+    comparisonStatus.className = "comparison-status error";
+    comparisonStatus.textContent = `对比失败：${error.message}`;
+  } finally {
+    compareRetrievalButton.disabled = false;
+    compareRetrievalButton.textContent = "对比新旧检索";
   }
 }
 
@@ -1052,6 +1258,9 @@ rebuildKnowledgeButton.addEventListener("click", rebuildKnowledge);
 refreshReviewQueueButton.addEventListener("click", loadReviewQueue);
 refreshKnowledgeVersionsButton.addEventListener("click", loadKnowledgeVersions);
 runRagEvaluationButton.addEventListener("click", runRagEvaluation);
+compareRetrievalButton.addEventListener("click", compareRetrievalStrategies);
+refreshEvaluationHistoryButton.addEventListener("click", loadEvaluationHistory);
+customEvaluationForm.addEventListener("submit", addCustomEvaluationCase);
 managerToggleButton.addEventListener("click", () => {
   setManagerVisible(knowledgeManager.classList.contains("is-hidden"));
 });

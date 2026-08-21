@@ -63,6 +63,16 @@ class FakeEvaluationVectorStore:
         ]
 
 
+class FakeComparisonVectorStore:
+    def __init__(self, matches):
+        self.matches = matches
+        self.queries = []
+
+    def similarity_search_with_relevance_scores(self, query, k):
+        self.queries.append((query, k))
+        return self.matches[:k]
+
+
 def mock_current_knowledge_base(monkeypatch):
     monkeypatch.setattr(
         ask_router,
@@ -237,7 +247,149 @@ def test_rag_evaluation_reports_hits_in_the_top_three(client, monkeypatch):
     assert data["passed_count"] == data["total_count"]
     assert data["pass_rate"] == 1
     assert all(item["expected_rank"] == 1 for item in data["results"])
-    assert all(k == 3 for _, k in vector_store.queries)
+    assert all(k == 8 for _, k in vector_store.queries)
+
+
+def test_retrieval_comparison_reports_deduplication_improvement(client, monkeypatch):
+    case = {
+        "case_id": "deduplication-case",
+        "case_source": "默认题",
+        "question": "目标资料在哪里？",
+        "expected_name": "目标资料",
+        "expected_type": "document",
+    }
+    vector_store = FakeComparisonVectorStore(
+        [
+            (
+                Document(
+                    page_content="同一资料的第一个切块",
+                    metadata={"name": "重复资料", "type": "document", "record_id": 1},
+                ),
+                0.99,
+            ),
+            (
+                Document(
+                    page_content="同一资料的第二个切块",
+                    metadata={"name": "重复资料", "type": "document", "record_id": 1},
+                ),
+                0.98,
+            ),
+            (
+                Document(
+                    page_content="另一份资料",
+                    metadata={"name": "另一份资料", "type": "document", "record_id": 2},
+                ),
+                0.97,
+            ),
+            (
+                Document(
+                    page_content="目标资料内容",
+                    metadata={"name": "目标资料", "type": "document", "record_id": 3},
+                ),
+                0.96,
+            ),
+        ]
+    )
+    monkeypatch.setattr(evaluation_router, "EVALUATION_CASES", (case,))
+    monkeypatch.setattr(
+        evaluation_router,
+        "get_knowledge_status",
+        lambda session: {"is_current": True},
+    )
+    monkeypatch.setattr(
+        evaluation_router,
+        "get_vector_store",
+        lambda: vector_store,
+    )
+
+    response = client.post("/evaluation/compare")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["baseline"]["passed_count"] == 0
+    assert data["current"]["passed_count"] == 1
+    assert data["pass_rate_delta"] == 1
+    assert data["improved_count"] == 1
+    assert data["regressed_count"] == 0
+    assert data["results"][0]["baseline"]["expected_rank"] is None
+    assert data["results"][0]["current"]["expected_rank"] == 3
+    assert data["results"][0]["change"] == "improved"
+    assert [k for _, k in vector_store.queries] == [3, 8]
+
+
+def test_rag_evaluation_saves_and_lists_history(client, monkeypatch):
+    vector_store = FakeEvaluationVectorStore()
+    monkeypatch.setattr(
+        evaluation_router,
+        "get_knowledge_status",
+        lambda session: {
+            "is_current": True,
+            "document_count": 13,
+        },
+    )
+    monkeypatch.setattr(
+        evaluation_router,
+        "get_vector_store",
+        lambda: vector_store,
+    )
+
+    run_response = client.post("/evaluation/run")
+
+    assert run_response.status_code == 200
+    run_data = run_response.json()
+    assert run_data["history_id"] > 0
+
+    history_response = client.get("/evaluation/history")
+
+    assert history_response.status_code == 200
+    history_data = history_response.json()
+    assert history_data["total_count"] == 1
+    assert history_data["runs"][0]["id"] == run_data["history_id"]
+    assert history_data["runs"][0]["passed_count"] == 4
+    assert history_data["runs"][0]["knowledge_document_count"] == 13
+
+
+def test_evaluation_history_limit_is_validated(client):
+    response = client.get("/evaluation/history", params={"limit": 0})
+
+    assert response.status_code == 422
+
+
+def test_custom_evaluation_cases_can_be_created_listed_and_deleted(client):
+    created = client.post(
+        "/evaluation/cases",
+        json={
+            "question": "布洛芬有什么作用？",
+            "expected_name": "布洛芬",
+            "expected_type": "drug",
+        },
+    )
+
+    assert created.status_code == 201
+    case_id = created.json()["id"]
+    assert created.json()["expected_type"] == "drug"
+
+    listed = client.get("/evaluation/cases")
+    assert listed.status_code == 200
+    assert listed.json()["total_count"] == 1
+    assert listed.json()["cases"][0]["id"] == case_id
+
+    deleted = client.delete(f"/evaluation/cases/{case_id}")
+    assert deleted.status_code == 204
+    assert client.get("/evaluation/cases").json()["cases"] == []
+
+
+def test_custom_evaluation_case_rejects_unknown_knowledge_type(client):
+    response = client.post(
+        "/evaluation/cases",
+        json={
+            "question": "测试问题",
+            "expected_name": "测试资料",
+            "expected_type": "unknown",
+        },
+    )
+
+    assert response.status_code == 422
 
 
 def test_condition_can_be_updated_and_deleted(client):

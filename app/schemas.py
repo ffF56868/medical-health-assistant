@@ -216,6 +216,7 @@ class KnowledgeReviewResponse(SQLModel):
 
 class RAGEvaluationCaseResult(SQLModel):
     case_id: str
+    case_source: str
     question: str
     expected_name: str
     expected_type: str
@@ -226,11 +227,102 @@ class RAGEvaluationCaseResult(SQLModel):
     top_score: float | None = None
 
 
+class RetrievalStrategyResult(SQLModel):
+    passed: bool
+    expected_rank: int | None = None
+    top_name: str | None = None
+    top_type: str | None = None
+    top_score: float | None = None
+
+
+class RetrievalComparisonCaseResult(SQLModel):
+    case_id: str
+    case_source: str
+    question: str
+    expected_name: str
+    expected_type: str
+    baseline: RetrievalStrategyResult
+    current: RetrievalStrategyResult
+    change: str
+
+
+class RetrievalStrategySummary(SQLModel):
+    passed_count: int
+    pass_rate: float
+
+
+class RetrievalComparisonResponse(SQLModel):
+    total_count: int
+    preset_count: int
+    custom_count: int
+    baseline: RetrievalStrategySummary
+    current: RetrievalStrategySummary
+    pass_rate_delta: float
+    improved_count: int
+    regressed_count: int
+    unchanged_count: int
+    results: list[RetrievalComparisonCaseResult] = Field(default_factory=list)
+
+
 class RAGEvaluationResponse(SQLModel):
+    history_id: int
     total_count: int
     passed_count: int
     pass_rate: float
+    preset_count: int
+    custom_count: int
     results: list[RAGEvaluationCaseResult] = Field(default_factory=list)
+
+
+class RAGEvaluationHistoryRead(SQLModel):
+    id: int
+    total_count: int
+    passed_count: int
+    pass_rate: float
+    preset_count: int
+    custom_count: int
+    knowledge_document_count: int
+    knowledge_hash: str | None = None
+    created_at: datetime
+
+
+class RAGEvaluationHistoryResponse(SQLModel):
+    total_count: int
+    runs: list[RAGEvaluationHistoryRead] = Field(default_factory=list)
+
+
+EVALUATION_EXPECTED_TYPES = {"condition", "drug", "document"}
+
+
+def validate_evaluation_expected_type(value: str) -> str:
+    normalized_value = strip_required_text(value)
+    if normalized_value not in EVALUATION_EXPECTED_TYPES:
+        raise ValueError("目标资料类型必须是 condition、drug 或 document")
+    return normalized_value
+
+
+class RAGEvaluationCaseCreate(SQLModel):
+    question: str = Field(min_length=1, max_length=1000)
+    expected_name: str = Field(min_length=1, max_length=200)
+    expected_type: str = Field(min_length=1, max_length=20)
+
+    _strip_question = field_validator("question", mode="before")(strip_required_text)
+    _strip_expected_name = field_validator("expected_name", mode="before")(
+        strip_required_text
+    )
+    _validate_expected_type = field_validator("expected_type", mode="before")(
+        validate_evaluation_expected_type
+    )
+
+
+class RAGEvaluationCaseRead(RAGEvaluationCaseCreate):
+    id: int
+    created_at: datetime
+
+
+class RAGEvaluationCaseListResponse(SQLModel):
+    total_count: int
+    cases: list[RAGEvaluationCaseRead] = Field(default_factory=list)
 
 
 class KnowledgeRebuildResponse(SQLModel):

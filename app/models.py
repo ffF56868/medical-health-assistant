@@ -71,3 +71,29 @@ class KnowledgeSnapshot(SQLModel, table=True):
         default_factory=lambda: datetime.now(UTC),
         index=True,
     )
+
+
+class RAGEvaluationCase(SQLModel, table=True):
+    id: int | None = Field(default=None, primary_key=True)
+    question: str = Field(max_length=1000)
+    expected_name: str = Field(max_length=200)
+    expected_type: str = Field(max_length=20)
+    created_at: datetime = Field(
+        default_factory=lambda: datetime.now(UTC),
+        index=True,
+    )
+
+
+class RAGEvaluationRun(SQLModel, table=True):
+    id: int | None = Field(default=None, primary_key=True)
+    total_count: int
+    passed_count: int
+    pass_rate: float
+    preset_count: int
+    custom_count: int
+    knowledge_document_count: int
+    knowledge_hash: str | None = Field(default=None, max_length=64)
+    created_at: datetime = Field(
+        default_factory=lambda: datetime.now(UTC),
+        index=True,
+    )

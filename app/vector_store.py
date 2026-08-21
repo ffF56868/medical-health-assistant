@@ -14,11 +14,40 @@ from app.source_metadata import get_source_tier_label, needs_source_review
 
 
 COLLECTION_NAME = "medical_health_knowledge"
+MIN_RELEVANCE_SCORE = 0.2
+RAG_RETRIEVAL_FETCH_COUNT = 8
+RAG_RETRIEVAL_RESULT_COUNT = 3
 TEXT_SPLITTER = RecursiveCharacterTextSplitter(
     chunk_size=500,
     chunk_overlap=80,
     separators=["\n\n", "\n", "。", "！", "？", "；", "，", ""],
 )
+
+
+def select_distinct_relevant_matches(
+    matches: list[tuple[object, float]],
+    min_relevance_score: float = MIN_RELEVANCE_SCORE,
+    limit: int = RAG_RETRIEVAL_RESULT_COUNT,
+) -> list[tuple[object, float]]:
+    """Keep the strongest relevant chunk from each knowledge record."""
+    best_matches: dict[tuple[str, str], tuple[object, float]] = {}
+    for document, score in matches:
+        if score < min_relevance_score:
+            continue
+        metadata = getattr(document, "metadata", {})
+        source_key = (
+            str(metadata.get("type", "unknown")),
+            str(metadata.get("record_id", metadata.get("name"))),
+        )
+        previous_match = best_matches.get(source_key)
+        if previous_match is None or score > previous_match[1]:
+            best_matches[source_key] = (document, score)
+
+    return sorted(
+        best_matches.values(),
+        key=lambda item: item[1],
+        reverse=True,
+    )[:limit]
 
 
 def get_vector_store() -> Chroma:
