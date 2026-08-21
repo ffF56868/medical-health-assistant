@@ -131,6 +131,38 @@ def test_existing_sqlite_data_receives_metadata_columns_without_data_loss():
     assert migrated_row.updated_at is None
 
 
+def test_existing_sqlite_evaluation_cases_receive_alternative_names_column():
+    old_database = create_engine("sqlite://")
+    with old_database.begin() as connection:
+        connection.exec_driver_sql(
+            'CREATE TABLE "ragevaluationcase" ('
+            'id INTEGER PRIMARY KEY, question VARCHAR(1000), '
+            'expected_name VARCHAR(200), expected_type VARCHAR(20), '
+            'created_at DATETIME)'
+        )
+        connection.exec_driver_sql(
+            "INSERT INTO \"ragevaluationcase\" "
+            "(id, question, expected_name, expected_type, created_at) "
+            "VALUES (1, '旧测试题', '旧资料', 'document', CURRENT_TIMESTAMP)"
+        )
+
+    create_db_and_tables(old_database)
+
+    with old_database.connect() as connection:
+        columns = {
+            row[1]
+            for row in connection.exec_driver_sql(
+                'PRAGMA table_info("ragevaluationcase")'
+            )
+        }
+        migrated_row = connection.exec_driver_sql(
+            'SELECT alternative_names_json FROM "ragevaluationcase" WHERE id = 1'
+        ).one()
+
+    assert "alternative_names_json" in columns
+    assert migrated_row.alternative_names_json == "[]"
+
+
 def test_blank_knowledge_search_is_rejected(client):
     response = client.get("/knowledge/search", params={"q": " "})
     assert response.status_code == 422
@@ -248,6 +280,47 @@ def test_rag_evaluation_reports_hits_in_the_top_three(client, monkeypatch):
     assert data["pass_rate"] == 1
     assert all(item["expected_rank"] == 1 for item in data["results"])
     assert all(k == 8 for _, k in vector_store.queries)
+
+
+def test_rag_evaluation_accepts_an_alternative_target_name(client, monkeypatch):
+    case = {
+        "case_id": "alternative-target-case",
+        "case_source": "默认题",
+        "question": "症状重叠时的相关资料是什么？",
+        "expected_name": "普通感冒",
+        "expected_type": "condition",
+        "alternative_names": ["过敏性鼻炎"],
+    }
+    vector_store = FakeComparisonVectorStore(
+        [
+            (
+                Document(
+                    page_content="过敏性鼻炎资料",
+                    metadata={
+                        "name": "过敏性鼻炎",
+                        "type": "condition",
+                        "record_id": 1,
+                    },
+                ),
+                0.91,
+            )
+        ]
+    )
+    monkeypatch.setattr(evaluation_router, "EVALUATION_CASES", (case,))
+    monkeypatch.setattr(
+        evaluation_router,
+        "get_knowledge_status",
+        lambda session: {"is_current": True},
+    )
+    monkeypatch.setattr(evaluation_router, "get_vector_store", lambda: vector_store)
+
+    response = client.post("/evaluation/run")
+
+    assert response.status_code == 200
+    result = response.json()["results"][0]
+    assert result["passed"] is True
+    assert result["expected_rank"] == 1
+    assert result["matched_name"] == "过敏性鼻炎"
 
 
 def test_retrieval_comparison_reports_deduplication_improvement(client, monkeypatch):
@@ -452,17 +525,20 @@ def test_custom_evaluation_cases_can_be_created_listed_and_deleted(client):
             "question": "布洛芬有什么作用？",
             "expected_name": "布洛芬",
             "expected_type": "drug",
+            "alternative_names": ["布洛芬缓释胶囊", "布洛芬"],
         },
     )
 
     assert created.status_code == 201
     case_id = created.json()["id"]
     assert created.json()["expected_type"] == "drug"
+    assert created.json()["alternative_names"] == ["布洛芬缓释胶囊", "布洛芬"]
 
     listed = client.get("/evaluation/cases")
     assert listed.status_code == 200
     assert listed.json()["total_count"] == 1
     assert listed.json()["cases"][0]["id"] == case_id
+    assert listed.json()["cases"][0]["alternative_names"] == ["布洛芬缓释胶囊", "布洛芬"]
 
     deleted = client.delete(f"/evaluation/cases/{case_id}")
     assert deleted.status_code == 204

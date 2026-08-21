@@ -48,6 +48,7 @@ const evaluationHistoryList = document.querySelector("#evaluation-history-list")
 const customEvaluationForm = document.querySelector("#custom-evaluation-form");
 const customEvaluationQuestion = document.querySelector("#evaluation-question");
 const customEvaluationExpectedName = document.querySelector("#evaluation-expected-name");
+const customEvaluationAlternativeNames = document.querySelector("#evaluation-alternative-names");
 const customEvaluationExpectedType = document.querySelector("#evaluation-expected-type");
 const customEvaluationStatus = document.querySelector("#custom-evaluation-status");
 const customEvaluationList = document.querySelector("#custom-evaluation-list");
@@ -569,7 +570,11 @@ function renderRagEvaluation(data) {
     const detail = document.createElement("p");
     const expectedType = getKnowledgeTypeLabel(result.expected_type);
     if (result.passed) {
-      detail.textContent = `通过：目标${expectedType}“${result.expected_name}”命中第 ${result.expected_rank} 条。`;
+      const matchedName = result.matched_name || result.expected_name;
+      const isAlternativeMatch = matchedName !== result.expected_name;
+      detail.textContent = isAlternativeMatch
+        ? `通过：可接受${expectedType}“${matchedName}”命中第 ${result.expected_rank} 条；主目标是“${result.expected_name}”。`
+        : `通过：目标${expectedType}“${matchedName}”命中第 ${result.expected_rank} 条。`;
     } else {
       const topResult = result.top_name
         ? `首位结果是${getKnowledgeTypeLabel(result.top_type)}“${result.top_name}”`
@@ -581,10 +586,13 @@ function renderRagEvaluation(data) {
   }
 }
 
-function getStrategyResultText(result) {
+function getStrategyResultText(result, expectedName) {
   const expectedRank = result.expected_rank;
   if (result.passed) {
-    return `命中第 ${expectedRank} 条`;
+    const matchedName = result.matched_name || expectedName;
+    return matchedName === expectedName
+      ? `命中第 ${expectedRank} 条`
+      : `可接受资料“${matchedName}”命中第 ${expectedRank} 条`;
   }
   if (!result.top_name) return "未检索到结果";
   return `未命中，首位为${getKnowledgeTypeLabel(result.top_type)}“${result.top_name}”`;
@@ -613,9 +621,9 @@ function renderRetrievalComparison(data) {
     const title = document.createElement("h5");
     title.textContent = result.question;
     const oldResult = document.createElement("p");
-    oldResult.textContent = `旧：${getStrategyResultText(result.baseline)}`;
+    oldResult.textContent = `旧：${getStrategyResultText(result.baseline, result.expected_name)}`;
     const newResult = document.createElement("p");
-    newResult.textContent = `新：${getStrategyResultText(result.current)}`;
+    newResult.textContent = `新：${getStrategyResultText(result.current, result.expected_name)}`;
     const change = document.createElement("p");
     change.className = "comparison-change";
     change.textContent = ({ improved: "提升", regressed: "回退", unchanged: "不变" })[result.change];
@@ -671,7 +679,10 @@ function renderCustomEvaluationCases(data) {
     const row = document.createElement("article");
     row.className = "custom-evaluation-item";
     const text = document.createElement("p");
-    text.textContent = `问题：${item.question}｜目标${getKnowledgeTypeLabel(item.expected_type)}：${item.expected_name}`;
+    const alternatives = item.alternative_names.length
+      ? `｜可接受：${item.alternative_names.join("、")}`
+      : "";
+    text.textContent = `问题：${item.question}｜目标${getKnowledgeTypeLabel(item.expected_type)}：${item.expected_name}${alternatives}`;
     const removeButton = document.createElement("button");
     removeButton.className = "text-button danger-button";
     removeButton.type = "button";
@@ -742,6 +753,12 @@ async function addCustomEvaluationCase(event) {
   const payload = {
     question: customEvaluationQuestion.value,
     expected_name: customEvaluationExpectedName.value,
+    alternative_names: [...new Set(
+      customEvaluationAlternativeNames.value
+        .split(/[，,、]/)
+        .map((name) => name.trim())
+        .filter(Boolean),
+    )],
     expected_type: customEvaluationExpectedType.value,
   };
   customEvaluationStatus.textContent = "正在保存自定义题...";
@@ -793,7 +810,7 @@ async function runRagEvaluation() {
     if (!response.ok) throw new Error(getErrorMessage(data, "评测失败。"));
     renderRagEvaluation(data);
     await loadEvaluationHistory();
-    evaluationStatus.textContent = "评测完成。通过表示目标资料进入检索结果前 3 条。";
+    evaluationStatus.textContent = "评测完成。通过表示主目标或可接受的同类型资料进入检索结果前 3 条。";
   } catch (error) {
     evaluationStatus.className = "evaluation-status error";
     evaluationStatus.textContent = `评测失败：${error.message}`;

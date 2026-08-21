@@ -30,6 +30,9 @@ SQLITE_COLUMN_MIGRATIONS = {
         "source_tier": "VARCHAR(20) NOT NULL DEFAULT 'unverified'",
         "updated_at": "DATETIME",
     },
+    "ragevaluationcase": {
+        "alternative_names_json": "TEXT NOT NULL DEFAULT '[]'",
+    },
 }
 
 

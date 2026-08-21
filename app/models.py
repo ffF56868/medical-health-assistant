@@ -78,6 +78,7 @@ class RAGEvaluationCase(SQLModel, table=True):
     question: str = Field(max_length=1000)
     expected_name: str = Field(max_length=200)
     expected_type: str = Field(max_length=20)
+    alternative_names_json: str = Field(default="[]", max_length=2000)
     created_at: datetime = Field(
         default_factory=lambda: datetime.now(UTC),
         index=True,

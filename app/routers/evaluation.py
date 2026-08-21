@@ -1,3 +1,5 @@
+import json
+
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlmodel import Session, select
 
@@ -53,6 +55,7 @@ EVALUATION_CASES = (
         "question": "鼻塞、流鼻涕和打喷嚏的相关资料是什么？",
         "expected_name": "普通感冒",
         "expected_type": "condition",
+        "alternative_names": ["过敏性鼻炎"],
         "case_source": "默认题",
     },
     {
@@ -65,14 +68,27 @@ EVALUATION_CASES = (
 )
 
 
+def get_alternative_names(case: dict) -> list[str]:
+    raw_names = case.get("alternative_names", [])
+    if not isinstance(raw_names, list):
+        return []
+    return [name for name in raw_names if isinstance(name, str)]
+
+
+def get_acceptable_names(case: dict) -> set[str]:
+    return {str(case["expected_name"]), *get_alternative_names(case)}
+
+
 def build_strategy_result(
     matches: list[tuple[object, float]],
-    case: dict[str, str],
+    case: dict,
 ) -> RetrievalStrategyResult:
     top_name = None
     top_type = None
     top_score = None
     expected_rank = None
+    matched_name = None
+    acceptable_names = get_acceptable_names(case)
 
     for rank, (document, score) in enumerate(matches, start=1):
         if rank == 1:
@@ -81,15 +97,17 @@ def build_strategy_result(
             top_score = round(score, 3)
         if (
             score >= MIN_RELEVANCE_SCORE
-            and document.metadata.get("name") == case["expected_name"]
+            and document.metadata.get("name") in acceptable_names
             and document.metadata.get("type") == case["expected_type"]
         ):
             expected_rank = rank
+            matched_name = str(document.metadata.get("name"))
             break
 
     return RetrievalStrategyResult(
         passed=expected_rank is not None,
         expected_rank=expected_rank,
+        matched_name=matched_name,
         top_name=top_name,
         top_type=top_type,
         top_score=top_score,
@@ -98,7 +116,7 @@ def build_strategy_result(
 
 def evaluate_baseline_case(
     vector_store: object,
-    case: dict[str, str],
+    case: dict,
 ) -> RetrievalStrategyResult:
     matches = vector_store.similarity_search_with_relevance_scores(
         case["question"],
@@ -109,7 +127,7 @@ def evaluate_baseline_case(
 
 def evaluate_current_case(
     vector_store: object,
-    case: dict[str, str],
+    case: dict,
 ) -> RetrievalStrategyResult:
     matches = vector_store.similarity_search_with_relevance_scores(
         case["question"],
@@ -124,14 +142,14 @@ def evaluate_current_case(
     )
 
 
-def evaluate_case(vector_store: object, case: dict[str, str]) -> RAGEvaluationCaseResult:
+def evaluate_case(vector_store: object, case: dict) -> RAGEvaluationCaseResult:
     result = evaluate_current_case(vector_store, case)
     return RAGEvaluationCaseResult(**case, **result.model_dump())
 
 
 def compare_case(
     vector_store: object,
-    case: dict[str, str],
+    case: dict,
 ) -> RetrievalComparisonCaseResult:
     baseline = evaluate_baseline_case(vector_store, case)
     current = evaluate_current_case(vector_store, case)
@@ -161,7 +179,7 @@ def get_match_type(document: object) -> str:
 
 def build_diagnostic_case(
     vector_store: object,
-    case: dict[str, str],
+    case: dict,
 ) -> RetrievalDiagnosticCaseResult:
     raw_matches = vector_store.similarity_search_with_relevance_scores(
         case["question"],
@@ -181,11 +199,12 @@ def build_diagnostic_case(
         )
         for rank, (document, score) in enumerate(selected_matches, start=1)
     ]
+    acceptable_names = get_acceptable_names(case)
     expected_raw_match = next(
         (
-            (rank, score)
+            (rank, score, get_match_name(document))
             for rank, (document, score) in enumerate(raw_matches, start=1)
-            if get_match_name(document) == case["expected_name"]
+            if get_match_name(document) in acceptable_names
             and get_match_type(document) == case["expected_type"]
         ),
         None,
@@ -193,12 +212,16 @@ def build_diagnostic_case(
 
     if strategy_result.expected_rank == 1:
         diagnostic_level = "healthy"
-        diagnostic = "目标资料位于首位，当前检索表现正常。"
+        diagnostic = (
+            f"可接受资料“{strategy_result.matched_name}”位于首位，"
+            "当前检索表现正常。"
+        )
         suggested_action = "暂不需要为这道题调整资料或检索参数。"
     elif strategy_result.expected_rank is not None:
         diagnostic_level = "attention"
         diagnostic = (
-            f"目标资料命中第 {strategy_result.expected_rank} 条，"
+            f"可接受资料“{strategy_result.matched_name}”命中第 "
+            f"{strategy_result.expected_rank} 条，"
             "能被找到，但前面还有更相近的资料。"
         )
         suggested_action = (
@@ -214,7 +237,8 @@ def build_diagnostic_case(
     elif expected_raw_match[1] < MIN_RELEVANCE_SCORE:
         diagnostic_level = "failed"
         diagnostic = (
-            f"目标资料进入候选的第 {expected_raw_match[0]} 条，"
+            f"可接受资料“{expected_raw_match[2]}”进入候选的第 "
+            f"{expected_raw_match[0]} 条，"
             f"但相关度 {expected_raw_match[1]:.3f} 低于阈值 {MIN_RELEVANCE_SCORE}。"
         )
         suggested_action = (
@@ -223,7 +247,8 @@ def build_diagnostic_case(
     else:
         diagnostic_level = "failed"
         diagnostic = (
-            f"目标资料进入候选的第 {expected_raw_match[0]} 条，"
+            f"可接受资料“{expected_raw_match[2]}”进入候选的第 "
+            f"{expected_raw_match[0]} 条，"
             "但被更高相关度的不同资料挤出了最终前 3 条。"
         )
         suggested_action = (
@@ -234,6 +259,7 @@ def build_diagnostic_case(
         **case,
         passed=strategy_result.passed,
         expected_rank=strategy_result.expected_rank,
+        matched_name=strategy_result.matched_name,
         diagnostic_level=diagnostic_level,
         diagnostic=diagnostic,
         suggested_action=suggested_action,
@@ -241,17 +267,37 @@ def build_diagnostic_case(
     )
 
 
-def build_custom_case(record: RAGEvaluationCase) -> dict[str, str]:
+def get_record_alternative_names(record: RAGEvaluationCase) -> list[str]:
+    try:
+        parsed_names = json.loads(record.alternative_names_json)
+    except json.JSONDecodeError:
+        return []
+    return parsed_names if isinstance(parsed_names, list) else []
+
+
+def serialize_evaluation_case(record: RAGEvaluationCase) -> RAGEvaluationCaseRead:
+    return RAGEvaluationCaseRead(
+        id=record.id,
+        question=record.question,
+        expected_name=record.expected_name,
+        expected_type=record.expected_type,
+        alternative_names=get_record_alternative_names(record),
+        created_at=record.created_at,
+    )
+
+
+def build_custom_case(record: RAGEvaluationCase) -> dict:
     return {
         "case_id": f"custom-{record.id}",
         "case_source": "自定义题",
         "question": record.question,
         "expected_name": record.expected_name,
         "expected_type": record.expected_type,
+        "alternative_names": get_record_alternative_names(record),
     }
 
 
-def get_evaluation_cases(session: Session) -> tuple[list[dict[str, str]], int]:
+def get_evaluation_cases(session: Session) -> tuple[list[dict], int]:
     custom_cases = session.exec(
         select(RAGEvaluationCase).order_by(RAGEvaluationCase.created_at)
     ).all()
@@ -267,7 +313,7 @@ def list_evaluation_cases(session: Session = Depends(get_session)):
     ).all()
     return RAGEvaluationCaseListResponse(
         total_count=len(cases),
-        cases=[RAGEvaluationCaseRead.model_validate(case) for case in cases],
+        cases=[serialize_evaluation_case(case) for case in cases],
     )
 
 
@@ -280,11 +326,16 @@ def create_evaluation_case(
     payload: RAGEvaluationCaseCreate,
     session: Session = Depends(get_session),
 ):
-    case = RAGEvaluationCase(**payload.model_dump())
+    payload_data = payload.model_dump()
+    alternative_names = payload_data.pop("alternative_names")
+    case = RAGEvaluationCase(
+        **payload_data,
+        alternative_names_json=json.dumps(alternative_names, ensure_ascii=False),
+    )
     session.add(case)
     session.commit()
     session.refresh(case)
-    return RAGEvaluationCaseRead.model_validate(case)
+    return serialize_evaluation_case(case)
 
 
 @router.delete("/cases/{case_id}", status_code=status.HTTP_204_NO_CONTENT)

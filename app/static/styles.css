@@ -264,7 +264,7 @@ h2 { font-size: 20px; margin: 0; }
 
 .evaluation-heading h3 { font-size: 16px; margin: 0; }
 
-.custom-evaluation-form { align-items: end; display: grid; gap: 10px; grid-template-columns: minmax(220px, 2fr) minmax(160px, 1fr) minmax(120px, 0.7fr) auto; margin-top: 16px; }
+.custom-evaluation-form { align-items: end; display: grid; gap: 10px; grid-template-columns: minmax(220px, 2fr) minmax(150px, 1fr) minmax(150px, 1fr) minmax(120px, 0.7fr) auto; margin-top: 16px; }
 
 .custom-evaluation-form label { color: #526166; display: grid; font-size: 13px; gap: 5px; }
 

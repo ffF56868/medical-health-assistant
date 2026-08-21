@@ -220,8 +220,10 @@ class RAGEvaluationCaseResult(SQLModel):
     question: str
     expected_name: str
     expected_type: str
+    alternative_names: list[str] = Field(default_factory=list)
     passed: bool
     expected_rank: int | None = None
+    matched_name: str | None = None
     top_name: str | None = None
     top_type: str | None = None
     top_score: float | None = None
@@ -230,6 +232,7 @@ class RAGEvaluationCaseResult(SQLModel):
 class RetrievalStrategyResult(SQLModel):
     passed: bool
     expected_rank: int | None = None
+    matched_name: str | None = None
     top_name: str | None = None
     top_type: str | None = None
     top_score: float | None = None
@@ -241,6 +244,7 @@ class RetrievalComparisonCaseResult(SQLModel):
     question: str
     expected_name: str
     expected_type: str
+    alternative_names: list[str] = Field(default_factory=list)
     baseline: RetrievalStrategyResult
     current: RetrievalStrategyResult
     change: str
@@ -277,8 +281,10 @@ class RetrievalDiagnosticCaseResult(SQLModel):
     question: str
     expected_name: str
     expected_type: str
+    alternative_names: list[str] = Field(default_factory=list)
     passed: bool
     expected_rank: int | None = None
+    matched_name: str | None = None
     diagnostic_level: str
     diagnostic: str
     suggested_action: str
@@ -330,10 +336,28 @@ def validate_evaluation_expected_type(value: str) -> str:
     return normalized_value
 
 
+def normalize_alternative_names(value: list[str] | None) -> list[str]:
+    if value is None:
+        return []
+    if not isinstance(value, list):
+        raise ValueError("可接受资料名称必须是列表")
+
+    names: list[str] = []
+    for name in value:
+        normalized_name = strip_required_text(name)
+        if normalized_name not in names:
+            names.append(normalized_name)
+
+    if len(names) > 10:
+        raise ValueError("最多可填写 10 个可接受资料名称")
+    return names
+
+
 class RAGEvaluationCaseCreate(SQLModel):
     question: str = Field(min_length=1, max_length=1000)
     expected_name: str = Field(min_length=1, max_length=200)
     expected_type: str = Field(min_length=1, max_length=20)
+    alternative_names: list[str] = Field(default_factory=list)
 
     _strip_question = field_validator("question", mode="before")(strip_required_text)
     _strip_expected_name = field_validator("expected_name", mode="before")(
@@ -342,6 +366,9 @@ class RAGEvaluationCaseCreate(SQLModel):
     _validate_expected_type = field_validator("expected_type", mode="before")(
         validate_evaluation_expected_type
     )
+    _normalize_alternative_names = field_validator(
+        "alternative_names", mode="before"
+    )(normalize_alternative_names)
 
 
 class RAGEvaluationCaseRead(RAGEvaluationCaseCreate):
