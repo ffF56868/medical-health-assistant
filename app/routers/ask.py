@@ -94,10 +94,29 @@ def get_stream_text(chunk: object) -> str:
     return str(content)
 
 
-def search_knowledge(vector_store: object, query: str, knowledge_type: str):
-    search_options = {"k": RAG_RETRIEVAL_FETCH_COUNT}
+def build_vector_filter(knowledge_type: str, source_filter: str) -> dict | None:
+    conditions: list[dict] = []
     if knowledge_type != "all":
-        search_options["filter"] = {"type": knowledge_type}
+        conditions.append({"type": knowledge_type})
+    if source_filter == "reviewed":
+        conditions.append({"needs_review": False})
+    if not conditions:
+        return None
+    if len(conditions) == 1:
+        return conditions[0]
+    return {"$and": conditions}
+
+
+def search_knowledge(
+    vector_store: object,
+    query: str,
+    knowledge_type: str,
+    source_filter: str,
+):
+    search_options = {"k": RAG_RETRIEVAL_FETCH_COUNT}
+    vector_filter = build_vector_filter(knowledge_type, source_filter)
+    if vector_filter is not None:
+        search_options["filter"] = vector_filter
     return vector_store.similarity_search_with_relevance_scores(query, **search_options)
 
 
@@ -205,6 +224,7 @@ def ask_question(
             ],
             processing_path="safety-keyword-guard",
             retrieval_scope=request.knowledge_type,
+            source_filter=request.source_filter,
             retrieved_count=0,
             latency_ms=round((perf_counter() - started_at) * 1000),
         )
@@ -222,6 +242,7 @@ def ask_question(
             vector_store,
             retrieval_query,
             request.knowledge_type,
+            request.source_filter,
         )
     except Exception as error:
         raise HTTPException(
@@ -252,6 +273,7 @@ def ask_question(
             references=[],
             processing_path="vector-search-no-match",
             retrieval_scope=request.knowledge_type,
+            source_filter=request.source_filter,
             retrieved_count=0,
             latency_ms=round((perf_counter() - started_at) * 1000),
         )
@@ -323,6 +345,7 @@ def ask_question(
         references=references,
         processing_path="rag-vector-retrieval",
         retrieval_scope=request.knowledge_type,
+        source_filter=request.source_filter,
         retrieved_count=len(relevant_documents),
         latency_ms=round((perf_counter() - started_at) * 1000),
     )
@@ -370,6 +393,7 @@ def stream_answer(
                     "source": "safety-keyword-guard",
                     "processing_path": "safety-keyword-guard",
                     "retrieval_scope": request.knowledge_type,
+                    "source_filter": request.source_filter,
                     "retrieved_count": 0,
                     "latency_ms": round((perf_counter() - started_at) * 1000),
                     "references": [
@@ -397,6 +421,7 @@ def stream_answer(
                     "assistant_message_id": assistant_message.id,
                     "processing_path": "safety-keyword-guard",
                     "retrieval_scope": request.knowledge_type,
+                    "source_filter": request.source_filter,
                     "retrieved_count": 0,
                     "latency_ms": round((perf_counter() - started_at) * 1000),
                 },
@@ -421,6 +446,7 @@ def stream_answer(
             vector_store,
             retrieval_query,
             request.knowledge_type,
+            request.source_filter,
         )
     except Exception as error:
         raise HTTPException(
@@ -450,6 +476,7 @@ def stream_answer(
                     "source": "chroma-vector-search:no-match",
                     "processing_path": "vector-search-no-match",
                     "retrieval_scope": request.knowledge_type,
+                    "source_filter": request.source_filter,
                     "retrieved_count": 0,
                     "latency_ms": round((perf_counter() - started_at) * 1000),
                     "references": [],
@@ -462,6 +489,7 @@ def stream_answer(
                     "assistant_message_id": assistant_message.id,
                     "processing_path": "vector-search-no-match",
                     "retrieval_scope": request.knowledge_type,
+                    "source_filter": request.source_filter,
                     "retrieved_count": 0,
                     "latency_ms": round((perf_counter() - started_at) * 1000),
                 },
@@ -514,6 +542,7 @@ def stream_answer(
                 "source": "chroma-retrieval-openai-generation",
                 "processing_path": "rag-vector-retrieval",
                 "retrieval_scope": request.knowledge_type,
+                "source_filter": request.source_filter,
                 "retrieved_count": len(relevant_documents),
                 "latency_ms": round((perf_counter() - started_at) * 1000),
                 "references": references,
@@ -553,6 +582,7 @@ def stream_answer(
                 "assistant_message_id": assistant_message.id,
                 "processing_path": "rag-vector-retrieval",
                 "retrieval_scope": request.knowledge_type,
+                "source_filter": request.source_filter,
                 "retrieved_count": len(relevant_documents),
                 "latency_ms": round((perf_counter() - started_at) * 1000),
             },

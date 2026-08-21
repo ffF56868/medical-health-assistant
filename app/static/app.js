@@ -1,6 +1,7 @@
 const form = document.querySelector("#ask-form");
 const questionInput = document.querySelector("#question");
 const retrievalScopeSelect = document.querySelector("#retrieval-scope");
+const sourceFilterSelect = document.querySelector("#source-filter");
 const messageList = document.querySelector("#message-list");
 const sendButton = document.querySelector("#send-button");
 const newChatButton = document.querySelector("#new-chat");
@@ -229,6 +230,10 @@ function appendTrace(message, trace) {
     drug: "仅药物",
     document: "仅健康资料",
   };
+  const sourceFilterLabels = {
+    all: "全部可信度",
+    reviewed: "仅已核验",
+  };
   const traceSection = document.createElement("div");
   traceSection.className = "answer-trace";
   const title = document.createElement("span");
@@ -237,11 +242,13 @@ function appendTrace(message, trace) {
   path.textContent = pathLabels[trace.processing_path] || "未知处理路径";
   const scope = document.createElement("span");
   scope.textContent = `范围：${scopeLabels[trace.retrieval_scope] || "全部资料"}`;
+  const sourceFilter = document.createElement("span");
+  sourceFilter.textContent = `可信度：${sourceFilterLabels[trace.source_filter] || "全部可信度"}`;
   const retrieved = document.createElement("span");
   retrieved.textContent = `命中 ${trace.retrieved_count || 0} 条资料`;
   const latency = document.createElement("span");
   latency.textContent = `耗时 ${trace.latency_ms || 0} ms`;
-  traceSection.append(title, path, scope, retrieved, latency);
+  traceSection.append(title, path, scope, sourceFilter, retrieved, latency);
   message.append(traceSection);
 }
 
@@ -1326,6 +1333,7 @@ async function requestStreamingAnswer(question) {
       question,
       conversation_id: conversationId,
       knowledge_type: retrievalScopeSelect.value,
+      source_filter: sourceFilterSelect.value,
     }),
   });
   if (!response.ok) {

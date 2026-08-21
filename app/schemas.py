@@ -81,6 +81,7 @@ class KnowledgeDocumentRead(KnowledgeDocumentCreate):
 
 
 KNOWLEDGE_TYPES = {"all", "condition", "drug", "document"}
+SOURCE_FILTERS = {"all", "reviewed"}
 
 
 def validate_knowledge_type(value: str) -> str:
@@ -90,10 +91,18 @@ def validate_knowledge_type(value: str) -> str:
     return normalized_value
 
 
+def validate_source_filter(value: str) -> str:
+    normalized_value = strip_required_text(value)
+    if normalized_value not in SOURCE_FILTERS:
+        raise ValueError("资料可信度筛选必须是 all 或 reviewed")
+    return normalized_value
+
+
 class AskRequest(SQLModel):
     question: str = Field(min_length=1, max_length=1000)
     conversation_id: str = Field(default="default", min_length=1, max_length=100)
     knowledge_type: str = Field(default="all", min_length=1, max_length=20)
+    source_filter: str = Field(default="all", min_length=1, max_length=20)
 
     _strip_question = field_validator("question", mode="before")(
         strip_required_text
@@ -103,6 +112,9 @@ class AskRequest(SQLModel):
     )
     _validate_knowledge_type = field_validator("knowledge_type", mode="before")(
         validate_knowledge_type
+    )
+    _validate_source_filter = field_validator("source_filter", mode="before")(
+        validate_source_filter
     )
 
 
@@ -126,6 +138,7 @@ class AskResponse(SQLModel):
     references: list[ReferenceRead] = Field(default_factory=list)
     processing_path: str
     retrieval_scope: str
+    source_filter: str
     retrieved_count: int
     latency_ms: int
 
