@@ -47,11 +47,17 @@ def save_message(
     conversation_id: str,
     role: str,
     content: str,
+    response_metadata: dict | None = None,
 ) -> ChatMessage:
     message = ChatMessage(
         conversation_id=conversation_id,
         role=role,
         content=content,
+        response_metadata_json=json.dumps(
+            response_metadata or {},
+            ensure_ascii=False,
+            default=str,
+        ),
     )
     session.add(message)
     return message
@@ -77,7 +83,7 @@ def get_urgent_warning_response(question: str) -> str | None:
 
 
 def format_sse_event(event: str, payload: dict) -> str:
-    data = json.dumps(payload, ensure_ascii=False)
+    data = json.dumps(payload, ensure_ascii=False, default=str)
     return f"event: {event}\ndata: {data}\n\n"
 
 
@@ -166,6 +172,47 @@ def build_source_limitations(references: list[dict]) -> str:
     return "参考资料已标注来源和更新时间，但仍只能作为健康信息参考。"
 
 
+def build_response_metadata(
+    *,
+    source: str,
+    references: list[dict],
+    processing_path: str,
+    retrieval_scope: str,
+    source_filter: str,
+    retrieved_count: int,
+    started_at: float,
+) -> dict:
+    """Keep the evidence used for an answer available after the page reloads."""
+    return {
+        "source": source,
+        "references": references,
+        "processing_path": processing_path,
+        "retrieval_scope": retrieval_scope,
+        "source_filter": source_filter,
+        "retrieved_count": retrieved_count,
+        "latency_ms": round((perf_counter() - started_at) * 1000),
+    }
+
+
+def build_safety_references() -> list[dict]:
+    return [
+        {
+            "name": "需要及时就医的警示信号",
+            "type": "safety_guard",
+            "source": "系统安全规则",
+            "source_tier": "professional",
+            "updated_at": None,
+            "needs_review": False,
+            "excerpt": (
+                "呼吸困难、持续或加重的胸痛、意识改变、抽搐、"
+                "单侧肢体无力、言语含糊或严重过敏表现时，"
+                "应立即寻求紧急医疗帮助。"
+            ),
+            "relevance_score": 1.0,
+        }
+    ]
+
+
 @router.post("", response_model=AskResponse)
 def ask_question(
     request: AskRequest,
@@ -192,42 +239,38 @@ def ask_question(
 
     urgent_answer = get_urgent_warning_response(request.question)
     if urgent_answer:
+        references = build_safety_references()
+        metadata = build_response_metadata(
+            source="safety-keyword-guard",
+            references=references,
+            processing_path="safety-keyword-guard",
+            retrieval_scope=request.knowledge_type,
+            source_filter=request.source_filter,
+            retrieved_count=0,
+            started_at=started_at,
+        )
         save_message(session, request.conversation_id, "user", request.question)
         assistant_message = save_message(
             session,
             request.conversation_id,
             "assistant",
             urgent_answer,
+            metadata,
         )
         session.commit()
         session.refresh(assistant_message)
         return AskResponse(
             question=request.question,
             answer=urgent_answer,
-            source="safety-keyword-guard",
+            source=metadata["source"],
             conversation_id=request.conversation_id,
             assistant_message_id=assistant_message.id,
-            references=[
-                {
-                    "name": "需要及时就医的警示信号",
-                    "type": "safety_guard",
-                    "source": "系统安全规则",
-                    "source_tier": "professional",
-                    "updated_at": None,
-                    "needs_review": False,
-                    "excerpt": (
-                        "呼吸困难、持续或加重的胸痛、意识改变、抽搐、"
-                        "单侧肢体无力、言语含糊或严重过敏表现时，"
-                        "应立即寻求紧急医疗帮助。"
-                    ),
-                    "relevance_score": 1.0,
-                }
-            ],
-            processing_path="safety-keyword-guard",
-            retrieval_scope=request.knowledge_type,
-            source_filter=request.source_filter,
-            retrieved_count=0,
-            latency_ms=round((perf_counter() - started_at) * 1000),
+            references=metadata["references"],
+            processing_path=metadata["processing_path"],
+            retrieval_scope=metadata["retrieval_scope"],
+            source_filter=metadata["source_filter"],
+            retrieved_count=metadata["retrieved_count"],
+            latency_ms=metadata["latency_ms"],
         )
 
     knowledge_status = get_knowledge_status(session)
@@ -256,27 +299,37 @@ def ask_question(
 
     if not relevant_documents:
         answer = "知识库中没有找到足够相关的内容。建议换一种更具体的说法。"
+        metadata = build_response_metadata(
+            source="chroma-vector-search:no-match",
+            references=[],
+            processing_path="vector-search-no-match",
+            retrieval_scope=request.knowledge_type,
+            source_filter=request.source_filter,
+            retrieved_count=0,
+            started_at=started_at,
+        )
         save_message(session, request.conversation_id, "user", request.question)
         assistant_message = save_message(
             session,
             request.conversation_id,
             "assistant",
             answer,
+            metadata,
         )
         session.commit()
         session.refresh(assistant_message)
         return AskResponse(
             question=request.question,
             answer=answer,
-            source="chroma-vector-search:no-match",
+            source=metadata["source"],
             conversation_id=request.conversation_id,
             assistant_message_id=assistant_message.id,
-            references=[],
-            processing_path="vector-search-no-match",
-            retrieval_scope=request.knowledge_type,
-            source_filter=request.source_filter,
-            retrieved_count=0,
-            latency_ms=round((perf_counter() - started_at) * 1000),
+            references=metadata["references"],
+            processing_path=metadata["processing_path"],
+            retrieval_scope=metadata["retrieval_scope"],
+            source_filter=metadata["source_filter"],
+            retrieved_count=metadata["retrieved_count"],
+            latency_ms=metadata["latency_ms"],
         )
 
     context = "\n\n".join(
@@ -327,12 +380,22 @@ def ask_question(
             detail="模型暂时不可用，请检查 CHAT_MODEL 和 API 配置",
         ) from error
 
+    metadata = build_response_metadata(
+        source="chroma-retrieval-openai-generation",
+        references=references,
+        processing_path="rag-vector-retrieval",
+        retrieval_scope=request.knowledge_type,
+        source_filter=request.source_filter,
+        retrieved_count=len(relevant_documents),
+        started_at=started_at,
+    )
     save_message(session, request.conversation_id, "user", request.question)
     assistant_message = save_message(
         session,
         request.conversation_id,
         "assistant",
         answer,
+        metadata,
     )
     session.commit()
     session.refresh(assistant_message)
@@ -340,15 +403,15 @@ def ask_question(
     return AskResponse(
         question=request.question,
         answer=answer,
-        source="chroma-retrieval-openai-generation",
+        source=metadata["source"],
         conversation_id=request.conversation_id,
         assistant_message_id=assistant_message.id,
-        references=references,
-        processing_path="rag-vector-retrieval",
-        retrieval_scope=request.knowledge_type,
-        source_filter=request.source_filter,
-        retrieved_count=len(relevant_documents),
-        latency_ms=round((perf_counter() - started_at) * 1000),
+        references=metadata["references"],
+        processing_path=metadata["processing_path"],
+        retrieval_scope=metadata["retrieval_scope"],
+        source_filter=metadata["source_filter"],
+        retrieved_count=metadata["retrieved_count"],
+        latency_ms=metadata["latency_ms"],
     )
 
 
@@ -379,53 +442,33 @@ def stream_answer(
     urgent_answer = get_urgent_warning_response(request.question)
     if urgent_answer:
         def urgent_event_stream():
+            metadata = build_response_metadata(
+                source="safety-keyword-guard",
+                references=build_safety_references(),
+                processing_path="safety-keyword-guard",
+                retrieval_scope=request.knowledge_type,
+                source_filter=request.source_filter,
+                retrieved_count=0,
+                started_at=started_at,
+            )
             save_message(session, request.conversation_id, "user", request.question)
             assistant_message = save_message(
                 session,
                 request.conversation_id,
                 "assistant",
                 urgent_answer,
+                metadata,
             )
             session.commit()
             session.refresh(assistant_message)
             yield format_sse_event(
                 "metadata",
-                {
-                    "source": "safety-keyword-guard",
-                    "processing_path": "safety-keyword-guard",
-                    "retrieval_scope": request.knowledge_type,
-                    "source_filter": request.source_filter,
-                    "retrieved_count": 0,
-                    "latency_ms": round((perf_counter() - started_at) * 1000),
-                    "references": [
-                        {
-                            "name": "需要及时就医的警示信号",
-                            "type": "safety_guard",
-                            "source": "系统安全规则",
-                            "source_tier": "professional",
-                            "updated_at": None,
-                            "needs_review": False,
-                            "excerpt": (
-                                "呼吸困难、持续或加重的胸痛、意识改变、抽搐、"
-                                "单侧肢体无力、言语含糊或严重过敏表现时，"
-                                "应立即寻求紧急医疗帮助。"
-                            ),
-                            "relevance_score": 1.0,
-                        }
-                    ],
-                },
+                metadata,
             )
             yield format_sse_event("token", {"text": urgent_answer})
             yield format_sse_event(
                 "done",
-                {
-                    "assistant_message_id": assistant_message.id,
-                    "processing_path": "safety-keyword-guard",
-                    "retrieval_scope": request.knowledge_type,
-                    "source_filter": request.source_filter,
-                    "retrieved_count": 0,
-                    "latency_ms": round((perf_counter() - started_at) * 1000),
-                },
+                {"assistant_message_id": assistant_message.id, **metadata},
             )
 
         return StreamingResponse(
@@ -462,38 +505,33 @@ def stream_answer(
         no_match_answer = "知识库中没有找到足够相关的内容。建议换一种更具体的说法。"
 
         def no_match_event_stream():
+            metadata = build_response_metadata(
+                source="chroma-vector-search:no-match",
+                references=[],
+                processing_path="vector-search-no-match",
+                retrieval_scope=request.knowledge_type,
+                source_filter=request.source_filter,
+                retrieved_count=0,
+                started_at=started_at,
+            )
             save_message(session, request.conversation_id, "user", request.question)
             assistant_message = save_message(
                 session,
                 request.conversation_id,
                 "assistant",
                 no_match_answer,
+                metadata,
             )
             session.commit()
             session.refresh(assistant_message)
             yield format_sse_event(
                 "metadata",
-                {
-                    "source": "chroma-vector-search:no-match",
-                    "processing_path": "vector-search-no-match",
-                    "retrieval_scope": request.knowledge_type,
-                    "source_filter": request.source_filter,
-                    "retrieved_count": 0,
-                    "latency_ms": round((perf_counter() - started_at) * 1000),
-                    "references": [],
-                },
+                metadata,
             )
             yield format_sse_event("token", {"text": no_match_answer})
             yield format_sse_event(
                 "done",
-                {
-                    "assistant_message_id": assistant_message.id,
-                    "processing_path": "vector-search-no-match",
-                    "retrieval_scope": request.knowledge_type,
-                    "source_filter": request.source_filter,
-                    "retrieved_count": 0,
-                    "latency_ms": round((perf_counter() - started_at) * 1000),
-                },
+                {"assistant_message_id": assistant_message.id, **metadata},
             )
 
         return StreamingResponse(
@@ -537,17 +575,18 @@ def stream_answer(
     )
 
     def answer_event_stream():
+        initial_metadata = build_response_metadata(
+            source="chroma-retrieval-openai-generation",
+            references=references,
+            processing_path="rag-vector-retrieval",
+            retrieval_scope=request.knowledge_type,
+            source_filter=request.source_filter,
+            retrieved_count=len(relevant_documents),
+            started_at=started_at,
+        )
         yield format_sse_event(
             "metadata",
-            {
-                "source": "chroma-retrieval-openai-generation",
-                "processing_path": "rag-vector-retrieval",
-                "retrieval_scope": request.knowledge_type,
-                "source_filter": request.source_filter,
-                "retrieved_count": len(relevant_documents),
-                "latency_ms": round((perf_counter() - started_at) * 1000),
-                "references": references,
-            },
+            initial_metadata,
         )
         answer_parts: list[str] = []
         try:
@@ -568,25 +607,28 @@ def stream_answer(
         if not answer:
             yield format_sse_event("error", {"detail": "模型没有返回可用内容"})
             return
+        metadata = build_response_metadata(
+            source="chroma-retrieval-openai-generation",
+            references=references,
+            processing_path="rag-vector-retrieval",
+            retrieval_scope=request.knowledge_type,
+            source_filter=request.source_filter,
+            retrieved_count=len(relevant_documents),
+            started_at=started_at,
+        )
         save_message(session, request.conversation_id, "user", request.question)
         assistant_message = save_message(
             session,
             request.conversation_id,
             "assistant",
             answer,
+            metadata,
         )
         session.commit()
         session.refresh(assistant_message)
         yield format_sse_event(
             "done",
-            {
-                "assistant_message_id": assistant_message.id,
-                "processing_path": "rag-vector-retrieval",
-                "retrieval_scope": request.knowledge_type,
-                "source_filter": request.source_filter,
-                "retrieved_count": len(relevant_documents),
-                "latency_ms": round((perf_counter() - started_at) * 1000),
-            },
+            {"assistant_message_id": assistant_message.id, **metadata},
         )
 
     return StreamingResponse(

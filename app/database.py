@@ -37,6 +37,9 @@ SQLITE_COLUMN_MIGRATIONS = {
     "ragevaluationrun": {
         "results_json": "TEXT NOT NULL DEFAULT '[]'",
     },
+    "chatmessage": {
+        "response_metadata_json": "TEXT NOT NULL DEFAULT '{}'",
+    },
 }
 
 

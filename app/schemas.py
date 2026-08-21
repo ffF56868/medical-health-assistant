@@ -149,6 +149,7 @@ class ChatMessageRead(SQLModel):
     conversation_id: str
     role: str
     content: str
+    response_metadata: dict = Field(default_factory=dict)
     created_at: datetime
 
 

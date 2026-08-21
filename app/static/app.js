@@ -5,6 +5,7 @@ const sourceFilterSelect = document.querySelector("#source-filter");
 const messageList = document.querySelector("#message-list");
 const sendButton = document.querySelector("#send-button");
 const newChatButton = document.querySelector("#new-chat");
+const exportConversationButton = document.querySelector("#export-conversation");
 const referenceTemplate = document.querySelector("#reference-template");
 const referenceDialog = document.querySelector("#reference-dialog");
 const referenceDialogTitle = document.querySelector("#reference-dialog-title");
@@ -244,7 +245,10 @@ async function openReferenceDialog(reference) {
     throw new Error("该引用没有可查看的原始资料。");
   }
 
-  const response = await fetch(`${config.endpoint}/${reference.record_id}`);
+  const [response, knowledgeStatusData] = await Promise.all([
+    fetch(`${config.endpoint}/${reference.record_id}`),
+    getKnowledgeStatusData().catch(() => null),
+  ]);
   const data = await response.json();
   if (!response.ok) throw new Error(getErrorMessage(data, "读取资料失败。"));
 
@@ -254,6 +258,19 @@ async function openReferenceDialog(reference) {
   appendReferenceDetail("资料来源", data.source);
   appendReferenceDetail("可信度等级", getSourceTierLabel(data.source_tier));
   appendReferenceDetail("最后更新", formatUpdatedAt(data.updated_at));
+  if (knowledgeStatusData?.is_current) {
+    appendReferenceDetail(
+      "向量库状态",
+      `已同步到当前知识库，上次建立索引：${formatUpdatedAt(knowledgeStatusData.indexed_at)}`,
+    );
+  } else if (knowledgeStatusData) {
+    appendReferenceDetail(
+      "向量库状态",
+      "待重建。当前原文可能已经更新，本次回答引用的可能是上次建立索引时的旧版本。",
+    );
+  } else {
+    appendReferenceDetail("向量库状态", "暂时无法确认同步状态。");
+  }
 
   if (reference.type === "condition") {
     appendReferenceDetail("常见症状", data.symptoms);
@@ -265,11 +282,19 @@ async function openReferenceDialog(reference) {
     appendReferenceDetail("资料内容", data.content);
   }
 
+  const warnings = [];
+  if (knowledgeStatusData && !knowledgeStatusData.is_current) {
+    warnings.push("知识库待重建，当前原文可能尚未被问答使用。");
+  }
   if (reference.needs_review) {
+    warnings.push("该资料仍需核验，不能作为医疗结论。");
+  }
+  if (warnings.length > 0) {
     referenceDialogStatus.className = "manager-status warning";
-    referenceDialogStatus.textContent = "该资料仍需核验，不能作为医疗结论。";
+    referenceDialogStatus.textContent = warnings.join(" ");
   } else {
     referenceDialogStatus.className = "manager-status";
+    referenceDialogStatus.textContent = "";
   }
   referenceDialog.showModal();
 }
@@ -426,18 +451,48 @@ async function loadConversation(nextConversationId) {
     saveActiveConversation();
     messageList.innerHTML = "";
     for (const message of messages) {
-      appendMessage(
+      const metadata = message.response_metadata || {};
+      const messageElement = appendMessage(
         message.content,
         message.role === "user" ? "user" : "assistant",
-        [],
+        message.role === "assistant" ? metadata.references || [] : [],
         message.role === "assistant" ? message.id : null,
       );
+      if (message.role === "assistant" && metadata.processing_path) {
+        appendTrace(messageElement, metadata);
+      }
     }
     if (messages.length === 0) renderWelcomeMessage();
     loadConversationList();
     setManagerVisible(false);
   } catch (error) {
     appendMessage(`无法加载历史对话：${error.message}`, "assistant");
+  }
+}
+
+async function exportConversation() {
+  exportConversationButton.disabled = true;
+  exportConversationButton.textContent = "正在导出";
+  try {
+    const response = await fetch(
+      `/conversations/${encodeURIComponent(conversationId)}/export`,
+    );
+    if (!response.ok) {
+      const data = await response.json();
+      throw new Error(getErrorMessage(data, "当前对话还没有可以导出的记录。"));
+    }
+    const file = await response.blob();
+    const url = URL.createObjectURL(file);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = "medical-health-conversation.md";
+    link.click();
+    URL.revokeObjectURL(url);
+  } catch (error) {
+    window.alert(`导出失败：${error.message}`);
+  } finally {
+    exportConversationButton.disabled = false;
+    exportConversationButton.textContent = "导出对话";
   }
 }
 
@@ -475,14 +530,18 @@ function showKnowledgeStatus(data) {
 
 async function loadKnowledgeStatus() {
   try {
-    const response = await fetch("/knowledge/status");
-    const data = await response.json();
-    if (!response.ok) throw new Error(data.detail || "读取失败");
-    showKnowledgeStatus(data);
+    showKnowledgeStatus(await getKnowledgeStatusData());
   } catch (error) {
     knowledgeStatus.className = "knowledge-status error";
     knowledgeStatus.textContent = "知识库状态暂时无法读取";
   }
+}
+
+async function getKnowledgeStatusData() {
+  const response = await fetch("/knowledge/status");
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.detail || "读取失败");
+  return data;
 }
 
 async function rebuildKnowledge() {
@@ -1488,6 +1547,7 @@ form.addEventListener("submit", async (event) => {
 });
 
 newChatButton.addEventListener("click", resetConversation);
+exportConversationButton.addEventListener("click", exportConversation);
 refreshHistoryButton.addEventListener("click", loadConversationList);
 rebuildKnowledgeButton.addEventListener("click", rebuildKnowledge);
 refreshReviewQueueButton.addEventListener("click", loadReviewQueue);

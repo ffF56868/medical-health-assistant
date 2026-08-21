@@ -194,6 +194,36 @@ def test_existing_sqlite_evaluation_runs_receive_result_snapshot_column():
     assert migrated_row.results_json == "[]"
 
 
+def test_existing_chat_messages_receive_response_metadata_column():
+    old_database = create_engine("sqlite://")
+    with old_database.begin() as connection:
+        connection.exec_driver_sql(
+            'CREATE TABLE "chatmessage" ('
+            'id INTEGER PRIMARY KEY, conversation_id VARCHAR(100), '
+            'role VARCHAR(20), content VARCHAR(10000), created_at DATETIME)'
+        )
+        connection.exec_driver_sql(
+            "INSERT INTO \"chatmessage\" "
+            "(id, conversation_id, role, content, created_at) "
+            "VALUES (1, 'old-conversation', 'assistant', '旧回答', CURRENT_TIMESTAMP)"
+        )
+
+    create_db_and_tables(old_database)
+
+    with old_database.connect() as connection:
+        columns = {
+            row[1]
+            for row in connection.exec_driver_sql('PRAGMA table_info("chatmessage")')
+        }
+        migrated_row = connection.exec_driver_sql(
+            'SELECT content, response_metadata_json FROM "chatmessage" WHERE id = 1'
+        ).one()
+
+    assert "response_metadata_json" in columns
+    assert migrated_row.content == "旧回答"
+    assert migrated_row.response_metadata_json == "{}"
+
+
 def test_blank_knowledge_search_is_rejected(client):
     response = client.get("/knowledge/search", params={"q": " "})
     assert response.status_code == 422
@@ -828,6 +858,32 @@ def test_conversation_can_be_listed_read_and_deleted(client):
     assert client.get("/conversations").json() == []
 
 
+def test_conversation_can_be_exported_as_markdown(client):
+    conversation_id = "test-conversation-export"
+    ask_response = client.post(
+        "/ask",
+        json={
+            "conversation_id": conversation_id,
+            "question": "我出现持续胸痛怎么办？",
+        },
+    )
+    assert ask_response.status_code == 200
+
+    export_response = client.get(f"/conversations/{conversation_id}/export")
+
+    assert export_response.status_code == 200
+    assert export_response.headers["content-type"].startswith("text/markdown")
+    assert "attachment; filename=medical-health-conversation.md" in export_response.headers[
+        "content-disposition"
+    ]
+    assert "我出现持续胸痛怎么办？" in export_response.text
+    assert "需要及时就医的警示信号" in export_response.text
+    assert "内容仅供健康信息参考，不代替医生诊断或处方。" in export_response.text
+
+    missing_response = client.get("/conversations/missing-conversation/export")
+    assert missing_response.status_code == 404
+
+
 def test_urgent_warning_bypasses_model_and_can_receive_feedback(client):
     ask_response = client.post(
         "/ask",
@@ -955,6 +1011,14 @@ def test_rag_keeps_the_best_chunk_and_returns_structured_references(
     assert data["source_filter"] == "all"
     assert data["retrieved_count"] == 2
     assert data["latency_ms"] >= 0
+
+    messages_response = client.get("/conversations/test-rag-references/messages")
+    assert messages_response.status_code == 200
+    assistant_metadata = messages_response.json()[1]["response_metadata"]
+    assert assistant_metadata["processing_path"] == "rag-vector-retrieval"
+    assert assistant_metadata["retrieval_scope"] == "all"
+    assert assistant_metadata["source_filter"] == "all"
+    assert assistant_metadata["references"][0]["record_id"] == 1
 
 
 def test_rag_returns_no_match_without_calling_the_chat_model(client, monkeypatch):
@@ -1153,3 +1217,8 @@ def test_rag_streams_tokens_and_saves_the_completed_answer(client, monkeypatch):
         "布洛芬有什么作用？",
         "这是分段返回的测试回答。",
     ]
+    assistant_metadata = messages.json()[1]["response_metadata"]
+    assert assistant_metadata["processing_path"] == "rag-vector-retrieval"
+    assert assistant_metadata["retrieval_scope"] == "drug"
+    assert assistant_metadata["source_filter"] == "reviewed"
+    assert assistant_metadata["references"][0]["name"] == "布洛芬"

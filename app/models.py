@@ -37,6 +37,7 @@ class ChatMessage(SQLModel, table=True):
     conversation_id: str = Field(index=True, max_length=100)
     role: str = Field(max_length=20)
     content: str = Field(max_length=10000)
+    response_metadata_json: str = Field(default="{}", max_length=30000)
     created_at: datetime = Field(
         default_factory=lambda: datetime.now(UTC),
         index=True,
