@@ -6,6 +6,10 @@ const messageList = document.querySelector("#message-list");
 const sendButton = document.querySelector("#send-button");
 const newChatButton = document.querySelector("#new-chat");
 const referenceTemplate = document.querySelector("#reference-template");
+const referenceDialog = document.querySelector("#reference-dialog");
+const referenceDialogTitle = document.querySelector("#reference-dialog-title");
+const referenceDetails = document.querySelector("#reference-details");
+const referenceDialogStatus = document.querySelector("#reference-dialog-status");
 const knowledgeStatus = document.querySelector("#knowledge-status");
 const rebuildKnowledgeButton = document.querySelector("#rebuild-knowledge");
 const managerToggleButton = document.querySelector("#knowledge-manager-toggle");
@@ -194,9 +198,80 @@ function appendReferences(message, references) {
       confidence.textContent += " | 资料需核验，不能作为医疗结论";
     }
     item.querySelector(".reference-excerpt").textContent = reference.excerpt;
+    const viewButton = item.querySelector(".reference-open");
+    if (Number.isInteger(reference.record_id)) {
+      viewButton.addEventListener("click", async () => {
+        viewButton.disabled = true;
+        viewButton.textContent = "正在读取...";
+        try {
+          await openReferenceDialog(reference);
+          viewButton.textContent = "查看原文";
+        } catch (error) {
+          viewButton.textContent = "读取失败";
+          setTimeout(() => { viewButton.textContent = "查看原文"; }, 1600);
+        } finally {
+          viewButton.disabled = false;
+        }
+      });
+    } else {
+      viewButton.remove();
+    }
     referenceSection.append(item);
   }
   message.append(referenceSection);
+}
+
+function closeReferenceDialog() {
+  referenceDialog.close();
+  referenceDetails.innerHTML = "";
+  referenceDialogStatus.textContent = "";
+}
+
+function appendReferenceDetail(label, value) {
+  const item = document.createElement("div");
+  item.className = "reference-detail";
+  const heading = document.createElement("h3");
+  heading.textContent = label;
+  const content = document.createElement("p");
+  content.textContent = value || "未记录";
+  item.append(heading, content);
+  referenceDetails.append(item);
+}
+
+async function openReferenceDialog(reference) {
+  const config = entryConfiguration[reference.type];
+  if (!config || !Number.isInteger(reference.record_id)) {
+    throw new Error("该引用没有可查看的原始资料。");
+  }
+
+  const response = await fetch(`${config.endpoint}/${reference.record_id}`);
+  const data = await response.json();
+  if (!response.ok) throw new Error(getErrorMessage(data, "读取资料失败。"));
+
+  referenceDialogTitle.textContent = data.name || data.title;
+  referenceDetails.innerHTML = "";
+  appendReferenceDetail("资料类型", getKnowledgeTypeLabel(reference.type));
+  appendReferenceDetail("资料来源", data.source);
+  appendReferenceDetail("可信度等级", getSourceTierLabel(data.source_tier));
+  appendReferenceDetail("最后更新", formatUpdatedAt(data.updated_at));
+
+  if (reference.type === "condition") {
+    appendReferenceDetail("常见症状", data.symptoms);
+    appendReferenceDetail("通用处理建议", data.treatment);
+  } else if (reference.type === "drug") {
+    appendReferenceDetail("药物作用", data.effects);
+    appendReferenceDetail("使用说明", data.instructions);
+  } else if (reference.type === "document") {
+    appendReferenceDetail("资料内容", data.content);
+  }
+
+  if (reference.needs_review) {
+    referenceDialogStatus.className = "manager-status warning";
+    referenceDialogStatus.textContent = "该资料仍需核验，不能作为医疗结论。";
+  } else {
+    referenceDialogStatus.className = "manager-status";
+  }
+  referenceDialog.showModal();
 }
 
 function appendFeedback(message, role, assistantMessageId) {
@@ -1434,6 +1509,8 @@ uploadForm.addEventListener("submit", uploadKnowledgeFile);
 editForm.addEventListener("submit", saveEdit);
 document.querySelector("#edit-cancel").addEventListener("click", closeEditDialog);
 document.querySelector("#edit-cancel-bottom").addEventListener("click", closeEditDialog);
+document.querySelector("#reference-dialog-close").addEventListener("click", closeReferenceDialog);
+document.querySelector("#reference-dialog-close-bottom").addEventListener("click", closeReferenceDialog);
 document.querySelector("#condition-form").addEventListener("submit", (event) => {
   event.preventDefault();
   createKnowledgeEntry(event.currentTarget, "/conditions");

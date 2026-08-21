@@ -944,6 +944,8 @@ def test_rag_keeps_the_best_chunk_and_returns_structured_references(
         "布洛芬",
     ]
     assert data["references"][0]["relevance_score"] == 0.9
+    assert data["references"][0]["record_id"] == 1
+    assert data["references"][1]["record_id"] == 2
     assert "高分切块" in data["references"][0]["excerpt"]
     assert data["references"][0]["source"] == "测试文档"
     assert data["references"][0]["source_tier"] == "unverified"

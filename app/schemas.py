@@ -121,6 +121,7 @@ class AskRequest(SQLModel):
 class ReferenceRead(SQLModel):
     name: str
     type: str
+    record_id: int | None = None
     source: str | None = None
     source_tier: str = "unverified"
     updated_at: datetime | None = None

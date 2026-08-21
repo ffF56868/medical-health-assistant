@@ -263,8 +263,23 @@
         <p class="reference-source"></p>
         <p class="reference-confidence"></p>
         <p class="reference-excerpt"></p>
+        <button class="reference-open" type="button">查看原文</button>
       </article>
     </template>
+    <dialog class="reference-dialog" id="reference-dialog">
+      <div class="dialog-heading">
+        <div>
+          <p class="eyebrow">问答引用</p>
+          <h2 id="reference-dialog-title">资料原文</h2>
+        </div>
+        <button class="dialog-close" id="reference-dialog-close" type="button" aria-label="关闭资料原文窗口" title="关闭">x</button>
+      </div>
+      <div class="reference-details" id="reference-details"></div>
+      <p class="manager-status" id="reference-dialog-status" aria-live="polite"></p>
+      <div class="dialog-actions">
+        <button class="secondary-button" id="reference-dialog-close-bottom" type="button">关闭</button>
+      </div>
+    </dialog>
     <dialog class="edit-dialog" id="edit-dialog">
       <form id="edit-form">
         <div class="dialog-heading">

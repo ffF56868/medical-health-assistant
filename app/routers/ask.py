@@ -140,6 +140,7 @@ def build_references(relevant_matches: list[tuple[object, float]]) -> list[dict]
             {
                 "name": metadata.get("name", "未命名资料"),
                 "type": metadata.get("type", "unknown"),
+                "record_id": metadata.get("record_id"),
                 "source": source,
                 "source_tier": source_tier,
                 "updated_at": updated_at,

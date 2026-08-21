@@ -410,6 +410,24 @@ h2 { font-size: 20px; margin: 0; }
 
 .reference-confidence.needs-review { color: #97362d; font-weight: 700; }
 
+.reference-open { background: transparent; border: 0; color: #21676a; cursor: pointer; font-size: 13px; margin-top: 8px; padding: 0; text-decoration: underline; text-underline-offset: 3px; }
+
+.reference-open:disabled { color: #657278; cursor: wait; }
+
+.reference-dialog { border: 1px solid #b9cecf; border-radius: 6px; color: #26363a; max-height: min(720px, calc(100vh - 36px)); padding: 20px; width: min(640px, calc(100vw - 32px)); }
+
+.reference-dialog::backdrop { background: rgba(25, 45, 48, 0.42); }
+
+.reference-details { display: grid; gap: 12px; margin-top: 18px; max-height: 50vh; overflow-y: auto; }
+
+.reference-detail { border-left: 3px solid #86aaa6; padding-left: 10px; }
+
+.reference-detail h3 { color: #254b4d; font-size: 13px; margin: 0; }
+
+.reference-detail p { color: #526166; line-height: 1.6; margin: 4px 0 0; white-space: pre-wrap; }
+
+.reference-dialog .manager-status.warning { color: #97362d; font-weight: 700; }
+
 .edit-metadata { color: #607176; font-size: 12px; margin: 0; }
 
 .feedback-controls { align-items: center; border-top: 1px solid #e2e9e9; color: #526166; display: flex; flex-wrap: wrap; font-size: 13px; gap: 8px; margin-top: 14px; padding-top: 12px; }
