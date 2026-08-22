@@ -4,6 +4,7 @@ from urllib.parse import urlparse
 from pydantic import field_validator, model_validator
 from sqlmodel import Field, SQLModel
 
+from app.security import normalize_account, validate_password
 from app.source_metadata import SOURCE_TIERS
 
 
@@ -11,6 +12,47 @@ def strip_required_text(value: str) -> str:
     if not isinstance(value, str) or not value.strip():
         raise ValueError("内容不能为空")
     return value.strip()
+
+
+class UserRead(SQLModel):
+    id: int
+    account: str
+    created_at: datetime
+
+
+class AuthRegisterRequest(SQLModel):
+    account: str = Field(min_length=3, max_length=200)
+    password: str = Field(min_length=1, max_length=100)
+    confirm_password: str = Field(min_length=1, max_length=100)
+
+    _normalize_account = field_validator("account", mode="before")(
+        normalize_account
+    )
+    _validate_password = field_validator("password", mode="before")(
+        validate_password
+    )
+
+    @model_validator(mode="after")
+    def passwords_must_match(self):
+        if self.password != self.confirm_password:
+            raise ValueError("两次输入的密码不一致")
+        return self
+
+
+class AuthLoginRequest(SQLModel):
+    account: str = Field(min_length=3, max_length=200)
+    password: str = Field(min_length=1, max_length=100)
+
+    _normalize_account = field_validator("account", mode="before")(
+        normalize_account
+    )
+
+
+class AuthResponse(SQLModel):
+    access_token: str
+    token_type: str
+    expires_at: datetime
+    user: UserRead
 
 
 def validate_source_tier(value: str) -> str:

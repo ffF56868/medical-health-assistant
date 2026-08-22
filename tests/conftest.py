@@ -9,6 +9,7 @@ from sqlmodel import SQLModel, Session, create_engine
 from app.database import get_session
 from app.routers import (
     ask,
+    auth,
     conditions,
     conversations,
     documents,
@@ -41,6 +42,7 @@ def client(test_engine) -> Generator[TestClient, None, None]:
     test_app.include_router(documents.router)
     test_app.include_router(feedback.router)
     test_app.include_router(evaluation.router)
+    test_app.include_router(auth.router)
 
     def override_get_session():
         with Session(test_engine) as session:

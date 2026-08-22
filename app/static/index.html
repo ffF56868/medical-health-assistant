@@ -43,6 +43,16 @@
             <button class="secondary-button" id="feedback-dashboard-toggle" type="button">质量面板</button>
             <button class="secondary-button" id="rebuild-knowledge" type="button">重建知识库</button>
             <button class="secondary-button" id="export-conversation" type="button">导出对话</button>
+            <button
+              class="account-button"
+              id="account-toggle"
+              type="button"
+              title="打开我的账号"
+              aria-label="打开我的账号"
+            >
+              <span class="account-avatar" aria-hidden="true">&#128100;</span>
+              <span id="account-label">我的</span>
+            </button>
             <button class="icon-button" id="new-chat" type="button" title="开始新对话" aria-label="开始新对话">+</button>
           </div>
         </header>
@@ -333,6 +343,45 @@
           <button class="primary-button" type="submit">保存修改</button>
         </div>
       </form>
+    </dialog>
+    <dialog class="account-dialog" id="account-dialog">
+      <div class="dialog-heading">
+        <div>
+          <p class="eyebrow">账号中心</p>
+          <h2>我的账号</h2>
+        </div>
+        <button class="dialog-close" id="account-dialog-close" type="button" aria-label="关闭账号窗口" title="关闭">x</button>
+      </div>
+
+      <section id="account-logged-out">
+        <div class="account-tabs" role="tablist" aria-label="账号操作">
+          <button class="account-tab active" id="account-login-tab" type="button" data-account-mode="login" role="tab" aria-selected="true">登录</button>
+          <button class="account-tab" id="account-register-tab" type="button" data-account-mode="register" role="tab" aria-selected="false">注册</button>
+        </div>
+        <form class="account-form" id="account-form">
+          <label for="account-input">手机号或邮箱
+            <input id="account-input" name="account" autocomplete="username" placeholder="例如：18242643780 或 name@example.com" required />
+          </label>
+          <p class="account-field-hint">手机号会按 +86 格式保存；邮箱不区分大小写。</p>
+          <label for="account-password">密码
+            <input id="account-password" name="password" type="password" autocomplete="current-password" placeholder="至少 8 位，包含英文字母和数字" required />
+          </label>
+          <p class="account-field-hint">密码长度 8-32 位，必须同时包含英文字母和数字。</p>
+          <label id="account-confirm-field" class="is-hidden" for="account-confirm-password">确认密码
+            <input id="account-confirm-password" name="confirm_password" type="password" autocomplete="new-password" placeholder="再次输入密码" />
+          </label>
+          <button class="primary-button" id="account-submit" type="submit">登录</button>
+        </form>
+        <p class="account-status" id="account-status" aria-live="polite"></p>
+      </section>
+
+      <section class="account-logged-in is-hidden" id="account-logged-in">
+        <p class="eyebrow">当前登录账号</p>
+        <p class="account-current" id="account-current"></p>
+        <p class="account-field-hint">你可以继续使用当前的健康问答功能。</p>
+        <button class="secondary-button" id="account-logout" type="button">退出登录</button>
+        <p class="account-status" id="account-logged-in-status" aria-live="polite"></p>
+      </section>
     </dialog>
     <script src="/static/app.js"></script>
   </body>

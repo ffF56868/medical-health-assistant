@@ -134,3 +134,23 @@ class RAGEvaluationRun(SQLModel, table=True):
         default_factory=lambda: datetime.now(UTC),
         index=True,
     )
+
+
+class User(SQLModel, table=True):
+    id: int | None = Field(default=None, primary_key=True)
+    account: str = Field(index=True, unique=True, max_length=200)
+    password_hash: str = Field(max_length=300)
+    is_active: bool = Field(default=True)
+    created_at: datetime = Field(
+        default_factory=lambda: datetime.now(UTC),
+        index=True,
+    )
+
+
+class UserSession(SQLModel, table=True):
+    id: int | None = Field(default=None, primary_key=True)
+    user_id: int = Field(index=True)
+    token_hash: str = Field(index=True, unique=True, max_length=128)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    expires_at: datetime
+    revoked_at: datetime | None = None

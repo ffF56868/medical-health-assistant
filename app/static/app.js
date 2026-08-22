@@ -6,6 +6,22 @@ const messageList = document.querySelector("#message-list");
 const sendButton = document.querySelector("#send-button");
 const newChatButton = document.querySelector("#new-chat");
 const exportConversationButton = document.querySelector("#export-conversation");
+const accountToggleButton = document.querySelector("#account-toggle");
+const accountLabel = document.querySelector("#account-label");
+const accountDialog = document.querySelector("#account-dialog");
+const accountDialogCloseButton = document.querySelector("#account-dialog-close");
+const accountLoggedOut = document.querySelector("#account-logged-out");
+const accountLoggedIn = document.querySelector("#account-logged-in");
+const accountForm = document.querySelector("#account-form");
+const accountInput = document.querySelector("#account-input");
+const accountPasswordInput = document.querySelector("#account-password");
+const accountConfirmField = document.querySelector("#account-confirm-field");
+const accountConfirmPasswordInput = document.querySelector("#account-confirm-password");
+const accountSubmitButton = document.querySelector("#account-submit");
+const accountStatus = document.querySelector("#account-status");
+const accountCurrent = document.querySelector("#account-current");
+const accountLogoutButton = document.querySelector("#account-logout");
+const accountLoggedInStatus = document.querySelector("#account-logged-in-status");
 const referenceTemplate = document.querySelector("#reference-template");
 const referenceDialog = document.querySelector("#reference-dialog");
 const referenceDialogTitle = document.querySelector("#reference-dialog-title");
@@ -128,6 +144,10 @@ let activeEdit = null;
 const selectedReviewTargets = new Map();
 
 const ACTIVE_CONVERSATION_KEY = "medical-health-active-conversation";
+const AUTH_TOKEN_KEY = "medical-health-auth-token";
+const nativeFetch = window.fetch.bind(window);
+let accountMode = "login";
+let currentUser = null;
 let conversationId = localStorage.getItem(ACTIVE_CONVERSATION_KEY) || createConversationId();
 
 function createConversationId() {
@@ -136,6 +156,140 @@ function createConversationId() {
 
 function saveActiveConversation() {
   localStorage.setItem(ACTIVE_CONVERSATION_KEY, conversationId);
+}
+
+function apiFetch(input, init = {}) {
+  const headers = new Headers(init.headers || {});
+  const token = localStorage.getItem(AUTH_TOKEN_KEY);
+  if (token) headers.set("Authorization", `Bearer ${token}`);
+  return nativeFetch(input, { ...init, headers });
+}
+
+function saveAuthSession(data) {
+  localStorage.setItem(AUTH_TOKEN_KEY, data.access_token);
+  currentUser = data.user;
+  renderAccountState();
+}
+
+function clearAuthSession() {
+  localStorage.removeItem(AUTH_TOKEN_KEY);
+  currentUser = null;
+  renderAccountState();
+}
+
+function setAccountMode(mode) {
+  accountMode = mode;
+  const isRegister = mode === "register";
+  document.querySelectorAll("[data-account-mode]").forEach((tab) => {
+    const isActive = tab.dataset.accountMode === mode;
+    tab.classList.toggle("active", isActive);
+    tab.setAttribute("aria-selected", String(isActive));
+  });
+  accountConfirmField.classList.toggle("is-hidden", !isRegister);
+  accountConfirmPasswordInput.required = isRegister;
+  accountPasswordInput.autocomplete = isRegister ? "new-password" : "current-password";
+  accountSubmitButton.textContent = isRegister ? "注册并登录" : "登录";
+  accountStatus.textContent = "";
+  accountStatus.className = "account-status";
+}
+
+function renderAccountState() {
+  const loggedIn = Boolean(currentUser);
+  accountLoggedOut.classList.toggle("is-hidden", loggedIn);
+  accountLoggedIn.classList.toggle("is-hidden", !loggedIn);
+  accountLabel.textContent = "我的";
+  accountToggleButton.title = loggedIn
+    ? `我的账号：${currentUser.account}`
+    : "打开我的账号";
+  accountToggleButton.setAttribute("aria-label", accountToggleButton.title);
+  if (loggedIn) accountCurrent.textContent = currentUser.account;
+}
+
+function openAccountDialog() {
+  renderAccountState();
+  accountStatus.textContent = "";
+  accountLoggedInStatus.textContent = "";
+  if (!accountDialog.open) accountDialog.showModal();
+}
+
+function closeAccountDialog() {
+  accountDialog.close();
+  accountForm.reset();
+  accountStatus.textContent = "";
+  accountLoggedInStatus.textContent = "";
+  setAccountMode("login");
+}
+
+async function submitAccount(event) {
+  event.preventDefault();
+  const payload = {
+    account: accountInput.value,
+    password: accountPasswordInput.value,
+  };
+  if (accountMode === "register") {
+    payload.confirm_password = accountConfirmPasswordInput.value;
+  }
+
+  accountSubmitButton.disabled = true;
+  accountStatus.className = "account-status";
+  accountStatus.textContent = accountMode === "register" ? "正在注册..." : "正在登录...";
+  try {
+    const endpoint = accountMode === "register" ? "/auth/register" : "/auth/login";
+    const response = await nativeFetch(endpoint, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    const data = await response.json();
+    if (!response.ok) throw new Error(getErrorMessage(data, "账号操作失败。"));
+    saveAuthSession(data);
+    accountForm.reset();
+    accountLoggedInStatus.textContent = accountMode === "register" ? "注册成功，已自动登录。" : "登录成功。";
+  } catch (error) {
+    accountStatus.className = "account-status error";
+    accountStatus.textContent = error.message;
+  } finally {
+    accountSubmitButton.disabled = false;
+  }
+}
+
+async function logoutAccount() {
+  accountLogoutButton.disabled = true;
+  accountLoggedInStatus.className = "account-status";
+  accountLoggedInStatus.textContent = "正在退出...";
+  try {
+    const response = await apiFetch("/auth/logout", { method: "POST" });
+    if (!response.ok) {
+      const data = await response.json();
+      throw new Error(getErrorMessage(data, "退出登录失败。"));
+    }
+    clearAuthSession();
+    setAccountMode("login");
+    accountStatus.textContent = "已退出登录。";
+  } catch (error) {
+    accountLoggedInStatus.className = "account-status error";
+    accountLoggedInStatus.textContent = error.message;
+  } finally {
+    accountLogoutButton.disabled = false;
+  }
+}
+
+async function loadCurrentUser() {
+  if (!localStorage.getItem(AUTH_TOKEN_KEY)) {
+    renderAccountState();
+    return;
+  }
+  try {
+    const response = await apiFetch("/auth/me");
+    if (!response.ok) {
+      clearAuthSession();
+      return;
+    }
+    currentUser = await response.json();
+    renderAccountState();
+  } catch (_error) {
+    clearAuthSession();
+  }
 }
 
 function scrollToLatestMessage() {
@@ -1893,6 +2047,13 @@ form.addEventListener("submit", async (event) => {
 
 newChatButton.addEventListener("click", resetConversation);
 exportConversationButton.addEventListener("click", exportConversation);
+accountToggleButton.addEventListener("click", openAccountDialog);
+accountDialogCloseButton.addEventListener("click", closeAccountDialog);
+accountForm.addEventListener("submit", submitAccount);
+accountLogoutButton.addEventListener("click", logoutAccount);
+document.querySelectorAll("[data-account-mode]").forEach((tab) => {
+  tab.addEventListener("click", () => setAccountMode(tab.dataset.accountMode));
+});
 refreshHistoryButton.addEventListener("click", loadConversationList);
 rebuildKnowledgeButton.addEventListener("click", rebuildKnowledge);
 refreshReviewQueueButton.addEventListener("click", loadReviewQueue);
@@ -1932,6 +2093,8 @@ document.querySelector("#document-form").addEventListener("submit", (event) => {
   createKnowledgeEntry(event.currentTarget, "/documents");
 });
 loadKnowledgeStatus();
+setAccountMode("login");
+loadCurrentUser();
 saveActiveConversation();
 loadConversationList();
 loadConversation(conversationId);

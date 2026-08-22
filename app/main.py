@@ -16,6 +16,7 @@ if not os.getenv("OPENAI_BASE_URL", "").strip():
 from app.database import create_db_and_tables, get_session
 from app.routers import (
     ask,
+    auth,
     conditions,
     conversations,
     documents,
@@ -79,3 +80,4 @@ app.include_router(conversations.router)
 app.include_router(documents.router)
 app.include_router(feedback.router)
 app.include_router(evaluation.router)
+app.include_router(auth.router)
