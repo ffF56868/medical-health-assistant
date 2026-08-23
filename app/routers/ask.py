@@ -10,7 +10,7 @@ from langchain_openai import ChatOpenAI
 from sqlmodel import Session, select
 
 from app.database import get_session
-from app.models import ChatMessage
+from app.models import ChatMessage, User
 from app.routers.auth import get_current_user
 from app.schemas import AskRequest, AskResponse
 from app.source_metadata import needs_source_review
@@ -53,8 +53,10 @@ def save_message(
     role: str,
     content: str,
     response_metadata: dict | None = None,
+    user_id: int | None = None,
 ) -> ChatMessage:
     message = ChatMessage(
+        user_id=user_id,
         conversation_id=conversation_id,
         role=role,
         content=content,
@@ -105,12 +107,29 @@ def get_stream_text(chunk: object) -> str:
     return str(content)
 
 
-def build_vector_filter(knowledge_type: str, source_filter: str) -> dict | None:
+def build_vector_filter(
+    knowledge_type: str,
+    source_filter: str,
+    current_user: User | None = None,
+) -> dict | None:
     conditions: list[dict] = []
     if knowledge_type != "all":
         conditions.append({"type": knowledge_type})
     if source_filter == "reviewed":
         conditions.append({"needs_review": False})
+    if current_user is not None and not current_user.is_admin:
+        access_filter = {
+            "$or": [
+                {"visibility": "public"},
+                {
+                    "$and": [
+                        {"visibility": "private"},
+                        {"owner_user_id": current_user.id},
+                    ]
+                },
+            ]
+        }
+        conditions.append(access_filter)
     if not conditions:
         return None
     if len(conditions) == 1:
@@ -123,9 +142,14 @@ def search_knowledge(
     query: str,
     knowledge_type: str,
     source_filter: str,
+    current_user: User | None = None,
 ):
     search_options = {"k": RAG_RETRIEVAL_FETCH_COUNT}
-    vector_filter = build_vector_filter(knowledge_type, source_filter)
+    vector_filter = build_vector_filter(
+        knowledge_type,
+        source_filter,
+        current_user,
+    )
     if vector_filter is not None:
         search_options["filter"] = vector_filter
     return vector_store.similarity_search_with_relevance_scores(query, **search_options)
@@ -169,6 +193,9 @@ def build_references(relevant_matches: list[tuple[object, float]]) -> list[dict]
         source_tier = str(metadata.get("source_tier", "unverified"))
         source = str(metadata.get("source", "未标注来源"))
         source_url = str(metadata.get("source_url", "") or "")
+        page_number = metadata.get("page_number")
+        if not isinstance(page_number, int) or page_number < 1:
+            page_number = None
         updated_at = parse_metadata_datetime(metadata.get("updated_at"))
         references.append(
             {
@@ -177,6 +204,7 @@ def build_references(relevant_matches: list[tuple[object, float]]) -> list[dict]
                 "record_id": metadata.get("record_id"),
                 "source": source,
                 "source_url": source_url or None,
+                "page_number": page_number,
                 "source_tier": source_tier,
                 "updated_at": updated_at,
                 "needs_review": bool(
@@ -250,6 +278,7 @@ def build_safety_references() -> list[dict]:
 @router.post("", response_model=AskResponse)
 def ask_question(
     request: AskRequest,
+    current_user: User = Depends(get_current_user),
     session: Session = Depends(get_session),
 ):
     """根据语义相似度，从 Chroma 向量库检索医疗健康资料。"""
@@ -257,6 +286,11 @@ def ask_question(
     history = session.exec(
         select(ChatMessage)
         .where(ChatMessage.conversation_id == request.conversation_id)
+        .where(
+            (ChatMessage.user_id == current_user.id)
+            if not current_user.is_admin
+            else True
+        )
         .order_by(ChatMessage.created_at.desc())
         .limit(10)
     ).all()
@@ -283,13 +317,20 @@ def ask_question(
             retrieved_count=0,
             started_at=started_at,
         )
-        save_message(session, request.conversation_id, "user", request.question)
+        save_message(
+            session,
+            request.conversation_id,
+            "user",
+            request.question,
+            user_id=current_user.id,
+        )
         assistant_message = save_message(
             session,
             request.conversation_id,
             "assistant",
             urgent_answer,
             metadata,
+            user_id=current_user.id,
         )
         session.commit()
         session.refresh(assistant_message)
@@ -321,6 +362,7 @@ def ask_question(
             retrieval_query,
             request.knowledge_type,
             request.source_filter,
+            current_user,
         )
     except Exception as error:
         raise HTTPException(
@@ -346,13 +388,20 @@ def ask_question(
             retrieved_count=0,
             started_at=started_at,
         )
-        save_message(session, request.conversation_id, "user", request.question)
+        save_message(
+            session,
+            request.conversation_id,
+            "user",
+            request.question,
+            user_id=current_user.id,
+        )
         assistant_message = save_message(
             session,
             request.conversation_id,
             "assistant",
             answer,
             metadata,
+            user_id=current_user.id,
         )
         session.commit()
         session.refresh(assistant_message)
@@ -427,13 +476,20 @@ def ask_question(
         retrieved_count=len(relevant_documents),
         started_at=started_at,
     )
-    save_message(session, request.conversation_id, "user", request.question)
+    save_message(
+        session,
+        request.conversation_id,
+        "user",
+        request.question,
+        user_id=current_user.id,
+    )
     assistant_message = save_message(
         session,
         request.conversation_id,
         "assistant",
         answer,
         metadata,
+        user_id=current_user.id,
     )
     session.commit()
     session.refresh(assistant_message)
@@ -456,6 +512,7 @@ def ask_question(
 @router.post("/stream")
 def stream_answer(
     request: AskRequest,
+    current_user: User = Depends(get_current_user),
     session: Session = Depends(get_session),
 ) -> StreamingResponse:
     """Use SSE to return answer chunks while preserving the normal RAG rules."""
@@ -463,6 +520,11 @@ def stream_answer(
     history = session.exec(
         select(ChatMessage)
         .where(ChatMessage.conversation_id == request.conversation_id)
+        .where(
+            (ChatMessage.user_id == current_user.id)
+            if not current_user.is_admin
+            else True
+        )
         .order_by(ChatMessage.created_at.desc())
         .limit(10)
     ).all()
@@ -489,13 +551,20 @@ def stream_answer(
                 retrieved_count=0,
                 started_at=started_at,
             )
-            save_message(session, request.conversation_id, "user", request.question)
+            save_message(
+                session,
+                request.conversation_id,
+                "user",
+                request.question,
+                user_id=current_user.id,
+            )
             assistant_message = save_message(
                 session,
                 request.conversation_id,
                 "assistant",
                 urgent_answer,
                 metadata,
+                user_id=current_user.id,
             )
             session.commit()
             session.refresh(assistant_message)
@@ -529,6 +598,7 @@ def stream_answer(
             retrieval_query,
             request.knowledge_type,
             request.source_filter,
+            current_user,
         )
     except Exception as error:
         raise HTTPException(
@@ -556,13 +626,20 @@ def stream_answer(
                 retrieved_count=0,
                 started_at=started_at,
             )
-            save_message(session, request.conversation_id, "user", request.question)
+            save_message(
+                session,
+                request.conversation_id,
+                "user",
+                request.question,
+                user_id=current_user.id,
+            )
             assistant_message = save_message(
                 session,
                 request.conversation_id,
                 "assistant",
                 no_match_answer,
                 metadata,
+                user_id=current_user.id,
             )
             session.commit()
             session.refresh(assistant_message)
@@ -658,13 +735,20 @@ def stream_answer(
             retrieved_count=len(relevant_documents),
             started_at=started_at,
         )
-        save_message(session, request.conversation_id, "user", request.question)
+        save_message(
+            session,
+            request.conversation_id,
+            "user",
+            request.question,
+            user_id=current_user.id,
+        )
         assistant_message = save_message(
             session,
             request.conversation_id,
             "assistant",
             answer,
             metadata,
+            user_id=current_user.id,
         )
         session.commit()
         session.refresh(assistant_message)

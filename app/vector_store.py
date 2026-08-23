@@ -85,6 +85,19 @@ def build_source_metadata(record: object) -> dict[str, str | bool]:
     }
 
 
+def build_access_metadata(record: object) -> dict[str, str | int]:
+    """Keep database ownership fields available to Chroma filters."""
+    owner_user_id = getattr(record, "owner_user_id", None)
+    return {
+        "knowledge_base_id": str(
+            getattr(record, "knowledge_base_id", "global") or "global"
+        ),
+        "visibility": str(getattr(record, "visibility", "public") or "public"),
+        # Chroma metadata cannot store None, so 0 represents a public record.
+        "owner_user_id": int(owner_user_id or 0),
+    }
+
+
 def build_knowledge_documents(session: Session) -> list[Document]:
     documents: list[Document] = []
 
@@ -106,6 +119,7 @@ def build_knowledge_documents(session: Session) -> list[Document]:
                     "record_id": condition.id,
                     "name": condition.name,
                     **build_source_metadata(condition),
+                    **build_access_metadata(condition),
                 },
             )
         )
@@ -128,6 +142,7 @@ def build_knowledge_documents(session: Session) -> list[Document]:
                     "record_id": drug.id,
                     "name": drug.name,
                     **build_source_metadata(drug),
+                    **build_access_metadata(drug),
                 },
             )
         )
@@ -150,7 +165,9 @@ def build_knowledge_documents(session: Session) -> list[Document]:
                     "type": "document",
                     "record_id": knowledge_document.id,
                     "name": knowledge_document.title,
+                    "page_number": knowledge_document.page_number or 0,
                     **build_source_metadata(knowledge_document),
+                    **build_access_metadata(knowledge_document),
                 },
             )
         )

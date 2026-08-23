@@ -4,6 +4,7 @@ from pathlib import Path
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
 from sqlmodel import Session, select
 
+from app.access import accessible_documents_statement, can_access_document
 from app.database import get_session
 from app.models import KnowledgeDocument, User
 from app.routers.auth import get_current_user, require_admin
@@ -71,7 +72,7 @@ def build_uploaded_document(filename: str, content: str) -> KnowledgeDocument:
 @router.post("", response_model=KnowledgeDocumentRead, status_code=201)
 def create_document(
     document_data: KnowledgeDocumentCreate,
-    _admin: User = Depends(require_admin),
+    current_user: User = Depends(require_admin),
     session: Session = Depends(get_session),
 ):
     duplicate = session.exec(
@@ -84,6 +85,10 @@ def create_document(
         raise HTTPException(status_code=409, detail="知识文档标题已经存在")
 
     document = KnowledgeDocument.model_validate(document_data)
+    if document.visibility == "private":
+        document.owner_user_id = current_user.id
+    else:
+        document.owner_user_id = None
     document.updated_at = datetime.now(UTC)
     session.add(document)
     session.commit()
@@ -189,9 +194,12 @@ async def upload_documents(
 @router.get("", response_model=list[KnowledgeDocumentRead])
 def list_documents(
     keyword: str | None = Query(default=None, max_length=100),
+    current_user: User = Depends(get_current_user),
     session: Session = Depends(get_session),
 ):
-    statement = select(KnowledgeDocument).order_by(KnowledgeDocument.id)
+    statement = accessible_documents_statement(current_user).order_by(
+        KnowledgeDocument.id
+    )
 
     if keyword and keyword.strip():
         statement = statement.where(
@@ -204,11 +212,12 @@ def list_documents(
 @router.get("/{document_id}", response_model=KnowledgeDocumentRead)
 def get_document(
     document_id: int,
+    current_user: User = Depends(get_current_user),
     session: Session = Depends(get_session),
 ):
     document = session.get(KnowledgeDocument, document_id)
 
-    if document is None:
+    if document is None or not can_access_document(document, current_user):
         raise HTTPException(status_code=404, detail="知识文档不存在")
 
     return document
@@ -218,7 +227,7 @@ def get_document(
 def update_document(
     document_id: int,
     document_data: KnowledgeDocumentCreate,
-    _admin: User = Depends(require_admin),
+    current_user: User = Depends(require_admin),
     session: Session = Depends(get_session),
 ):
     document = session.get(KnowledgeDocument, document_id)
@@ -241,6 +250,12 @@ def update_document(
     document.source = document_data.source
     document.source_url = document_data.source_url
     document.source_tier = document_data.source_tier
+    document.knowledge_base_id = document_data.knowledge_base_id
+    document.visibility = document_data.visibility
+    document.page_number = document_data.page_number
+    document.owner_user_id = (
+        current_user.id if document_data.visibility == "private" else None
+    )
     document.updated_at = datetime.now(UTC)
     session.add(document)
     session.commit()

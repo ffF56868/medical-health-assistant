@@ -20,17 +20,25 @@ SQLITE_COLUMN_MIGRATIONS = {
         "source": "VARCHAR(200) NOT NULL DEFAULT '未标注来源'",
         "source_url": "TEXT",
         "source_tier": "VARCHAR(20) NOT NULL DEFAULT 'unverified'",
+        "knowledge_base_id": "VARCHAR(100) NOT NULL DEFAULT 'global'",
+        "visibility": "VARCHAR(20) NOT NULL DEFAULT 'public'",
         "updated_at": "DATETIME",
     },
     "drug": {
         "source": "VARCHAR(200) NOT NULL DEFAULT '未标注来源'",
         "source_url": "TEXT",
         "source_tier": "VARCHAR(20) NOT NULL DEFAULT 'unverified'",
+        "knowledge_base_id": "VARCHAR(100) NOT NULL DEFAULT 'global'",
+        "visibility": "VARCHAR(20) NOT NULL DEFAULT 'public'",
         "updated_at": "DATETIME",
     },
     "knowledgedocument": {
         "source_url": "TEXT",
         "source_tier": "VARCHAR(20) NOT NULL DEFAULT 'unverified'",
+        "owner_user_id": "INTEGER",
+        "knowledge_base_id": "VARCHAR(100) NOT NULL DEFAULT 'global'",
+        "visibility": "VARCHAR(20) NOT NULL DEFAULT 'public'",
+        "page_number": "INTEGER",
         "updated_at": "DATETIME",
     },
     "ragevaluationcase": {
@@ -41,6 +49,7 @@ SQLITE_COLUMN_MIGRATIONS = {
         "results_json": "TEXT NOT NULL DEFAULT '[]'",
     },
     "chatmessage": {
+        "user_id": "INTEGER",
         "response_metadata_json": "TEXT NOT NULL DEFAULT '{}'",
     },
     "knowledgerebuildjob": {

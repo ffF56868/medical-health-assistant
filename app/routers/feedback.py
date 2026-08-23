@@ -41,10 +41,18 @@ def get_question_for_answer(
 @router.post("", response_model=FeedbackRead)
 def create_or_update_feedback(
     feedback_data: FeedbackCreate,
+    current_user: User = Depends(get_current_user),
     session: Session = Depends(get_session),
 ):
     message = session.get(ChatMessage, feedback_data.assistant_message_id)
-    if message is None or message.role != "assistant":
+    if (
+        message is None
+        or message.role != "assistant"
+        or (
+            not current_user.is_admin
+            and message.user_id != current_user.id
+        )
+    ):
         raise HTTPException(status_code=404, detail="助手回答记录不存在")
 
     feedback = session.exec(

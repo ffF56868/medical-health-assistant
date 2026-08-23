@@ -145,9 +145,25 @@ class DrugRead(DrugCreate):
 class KnowledgeDocumentCreate(SourceMetadataCreate):
     title: str = Field(min_length=1, max_length=200)
     content: str = Field(min_length=1, max_length=20000)
+    knowledge_base_id: str = Field(default="global", min_length=1, max_length=100)
+    visibility: str = Field(default="public", min_length=1, max_length=20)
+    page_number: int | None = Field(default=None, ge=1)
 
     _strip_title = field_validator("title", mode="before")(strip_required_text)
     _strip_content = field_validator("content", mode="before")(strip_required_text)
+
+    @field_validator("knowledge_base_id", mode="before")
+    @classmethod
+    def normalize_knowledge_base_id(cls, value: str) -> str:
+        return strip_required_text(value)
+
+    @field_validator("visibility", mode="before")
+    @classmethod
+    def validate_visibility(cls, value: str) -> str:
+        normalized_value = strip_required_text(value)
+        if normalized_value not in {"public", "private"}:
+            raise ValueError("可见范围必须是 public 或 private")
+        return normalized_value
 
 
 class KnowledgeDocumentRead(KnowledgeDocumentCreate):
@@ -224,6 +240,7 @@ class ReferenceRead(SQLModel):
     record_id: int | None = None
     source: str | None = None
     source_url: str | None = None
+    page_number: int | None = None
     source_tier: str = "unverified"
     updated_at: datetime | None = None
     needs_review: bool = True

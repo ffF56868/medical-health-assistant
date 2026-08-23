@@ -11,6 +11,8 @@ class Condition(SQLModel, table=True):
     source: str = Field(default="未标注来源", max_length=200)
     source_url: str | None = Field(default=None, max_length=2000)
     source_tier: str = Field(default="unverified", max_length=20)
+    knowledge_base_id: str = Field(default="global", index=True, max_length=100)
+    visibility: str = Field(default="public", index=True, max_length=20)
     updated_at: datetime | None = Field(default=None)
 
 
@@ -22,6 +24,8 @@ class Drug(SQLModel, table=True):
     source: str = Field(default="未标注来源", max_length=200)
     source_url: str | None = Field(default=None, max_length=2000)
     source_tier: str = Field(default="unverified", max_length=20)
+    knowledge_base_id: str = Field(default="global", index=True, max_length=100)
+    visibility: str = Field(default="public", index=True, max_length=20)
     updated_at: datetime | None = Field(default=None)
 
 
@@ -32,11 +36,16 @@ class KnowledgeDocument(SQLModel, table=True):
     source: str = Field(default="未标注来源", max_length=200)
     source_url: str | None = Field(default=None, max_length=2000)
     source_tier: str = Field(default="unverified", max_length=20)
+    owner_user_id: int | None = Field(default=None, index=True)
+    knowledge_base_id: str = Field(default="global", index=True, max_length=100)
+    visibility: str = Field(default="public", index=True, max_length=20)
+    page_number: int | None = Field(default=None, index=True, ge=1)
     updated_at: datetime | None = Field(default=None)
 
 
 class ChatMessage(SQLModel, table=True):
     id: int | None = Field(default=None, primary_key=True)
+    user_id: int | None = Field(default=None, index=True)
     conversation_id: str = Field(index=True, max_length=100)
     role: str = Field(max_length=20)
     content: str = Field(max_length=10000)

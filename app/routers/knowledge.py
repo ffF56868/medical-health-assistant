@@ -5,6 +5,7 @@ from threading import Lock
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
 from sqlmodel import Session, select
 
+from app.access import accessible_documents_statement
 from app.database import engine, get_session
 from app.knowledge_versions import (
     create_knowledge_snapshot,
@@ -500,8 +501,9 @@ def list_review_logs(
 def search_knowledge(
     q: str = Query(min_length=1, max_length=100),
     limit: int = Query(default=20, ge=1, le=100),
+    current_user: User = Depends(get_current_user),
     session: Session = Depends(get_session),
-): 
+):
     query = q.strip()
     if not query:
         raise HTTPException(status_code=422, detail="搜索关键词不能为空")
@@ -565,7 +567,7 @@ def search_knowledge(
             )
 
     for document in session.exec(
-        select(KnowledgeDocument).order_by(KnowledgeDocument.id)
+        accessible_documents_statement(current_user).order_by(KnowledgeDocument.id)
     ).all():
         fields = {
             "标题": document.title,

@@ -5,7 +5,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from sqlmodel import Session, select
 
 from app.database import get_session
-from app.models import AnswerFeedback, ChatMessage
+from app.models import AnswerFeedback, ChatMessage, User
 from app.routers.auth import get_current_user
 from app.schemas import ChatMessageRead, ConversationSummary
 
@@ -40,12 +40,14 @@ def to_message_read(message: ChatMessage) -> ChatMessageRead:
 def get_conversation_messages(
     session: Session,
     conversation_id: str,
+    current_user: User,
 ) -> list[ChatMessage]:
-    return session.exec(
-        select(ChatMessage)
-        .where(ChatMessage.conversation_id == conversation_id)
-        .order_by(ChatMessage.created_at, ChatMessage.id)
-    ).all()
+    statement = select(ChatMessage).where(
+        ChatMessage.conversation_id == conversation_id
+    )
+    if not current_user.is_admin:
+        statement = statement.where(ChatMessage.user_id == current_user.id)
+    return session.exec(statement.order_by(ChatMessage.created_at, ChatMessage.id)).all()
 
 
 def format_references_for_export(references: object) -> list[str]:
@@ -114,10 +116,14 @@ def build_conversation_markdown(
 @router.get("", response_model=list[ConversationSummary])
 def list_conversations(
     limit: int = Query(default=30, ge=1, le=100),
+    current_user: User = Depends(get_current_user),
     session: Session = Depends(get_session),
 ):
+    statement = select(ChatMessage)
+    if not current_user.is_admin:
+        statement = statement.where(ChatMessage.user_id == current_user.id)
     messages = session.exec(
-        select(ChatMessage).order_by(ChatMessage.created_at, ChatMessage.id)
+        statement.order_by(ChatMessage.created_at, ChatMessage.id)
     ).all()
     grouped_messages: dict[str, list[ChatMessage]] = {}
     for message in messages:
@@ -153,20 +159,24 @@ def list_conversations(
 @router.get("/{conversation_id}/messages", response_model=list[ChatMessageRead])
 def list_messages(
     conversation_id: str,
+    current_user: User = Depends(get_current_user),
     session: Session = Depends(get_session),
 ):
     return [
         to_message_read(message)
-        for message in get_conversation_messages(session, conversation_id)
+        for message in get_conversation_messages(
+            session, conversation_id, current_user
+        )
     ]
 
 
 @router.get("/{conversation_id}/export")
 def export_conversation(
     conversation_id: str,
+    current_user: User = Depends(get_current_user),
     session: Session = Depends(get_session),
 ):
-    messages = get_conversation_messages(session, conversation_id)
+    messages = get_conversation_messages(session, conversation_id, current_user)
     if not messages:
         raise HTTPException(status_code=404, detail="会话记录不存在")
 
@@ -182,11 +192,15 @@ def export_conversation(
 @router.delete("/{conversation_id}/messages", status_code=status.HTTP_204_NO_CONTENT)
 def clear_messages(
     conversation_id: str,
+    current_user: User = Depends(get_current_user),
     session: Session = Depends(get_session),
 ):
-    messages = session.exec(
-        select(ChatMessage).where(ChatMessage.conversation_id == conversation_id)
-    ).all()
+    statement = select(ChatMessage).where(
+        ChatMessage.conversation_id == conversation_id
+    )
+    if not current_user.is_admin:
+        statement = statement.where(ChatMessage.user_id == current_user.id)
+    messages = session.exec(statement).all()
 
     if not messages:
         raise HTTPException(status_code=404, detail="会话记录不存在")
