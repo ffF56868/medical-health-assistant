@@ -46,6 +46,9 @@ SQLITE_COLUMN_MIGRATIONS = {
     "knowledgerebuildjob": {
         "retry_of_job_id": "INTEGER",
     },
+    "user": {
+        "is_admin": "BOOLEAN NOT NULL DEFAULT 0",
+    },
 }
 
 

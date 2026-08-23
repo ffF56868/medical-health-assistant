@@ -4,16 +4,22 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlmodel import Session, select
 
 from app.database import get_session
-from app.models import Condition
+from app.models import Condition, User
+from app.routers.auth import get_current_user, require_admin
 from app.schemas import ConditionCreate, ConditionRead
 
 
-router = APIRouter(prefix="/conditions", tags=["conditions"])
+router = APIRouter(
+    prefix="/conditions",
+    tags=["conditions"],
+    dependencies=[Depends(get_current_user)],
+)
 
 
 @router.post("", response_model=ConditionRead, status_code=201)
 def create_condition(
     condition_data: ConditionCreate,
+    _admin: User = Depends(require_admin),
     session: Session = Depends(get_session),
 ):
     existing_condition = session.exec(
@@ -61,6 +67,7 @@ def get_condition(
 def update_condition(
     condition_id: int,
     condition_data: ConditionCreate,
+    _admin: User = Depends(require_admin),
     session: Session = Depends(get_session),
 ):
     condition = session.get(Condition, condition_id)
@@ -94,6 +101,7 @@ def update_condition(
 @router.delete("/{condition_id}", status_code=204)
 def delete_condition(
     condition_id: int,
+    _admin: User = Depends(require_admin),
     session: Session = Depends(get_session),
 ):
     condition = session.get(Condition, condition_id)

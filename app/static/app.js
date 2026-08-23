@@ -169,12 +169,15 @@ function saveAuthSession(data) {
   localStorage.setItem(AUTH_TOKEN_KEY, data.access_token);
   currentUser = data.user;
   renderAccountState();
+  refreshAuthenticatedView();
 }
 
 function clearAuthSession() {
   localStorage.removeItem(AUTH_TOKEN_KEY);
   currentUser = null;
   renderAccountState();
+  renderWelcomeMessage();
+  historyList.innerHTML = '<p class="history-empty">登录后查看历史对话</p>';
 }
 
 function setAccountMode(mode) {
@@ -203,6 +206,39 @@ function renderAccountState() {
     : "打开我的账号";
   accountToggleButton.setAttribute("aria-label", accountToggleButton.title);
   if (loggedIn) accountCurrent.textContent = currentUser.account;
+  updatePermissionUI();
+}
+
+function updatePermissionUI() {
+  const isAdmin = Boolean(currentUser?.is_admin);
+  const lock = " \uD83D\uDD12";
+  managerToggleButton.textContent = isAdmin ? "管理资料" : `管理资料${lock}`;
+  feedbackDashboardToggle.textContent = isAdmin ? "质量面板" : `质量面板${lock}`;
+  rebuildKnowledgeButton.textContent = isAdmin ? "重建知识库" : `重建知识库${lock}`;
+  const title = isAdmin ? "" : currentUser ? "需要管理员权限" : "请先登录";
+  [managerToggleButton, feedbackDashboardToggle, rebuildKnowledgeButton].forEach((button) => {
+    button.title = title;
+  });
+}
+
+function requireLoginForKnowledge() {
+  if (currentUser) return true;
+  openAccountDialog();
+  accountStatus.className = "account-status error";
+  accountStatus.textContent = "请先登录后再使用健康知识库。";
+  return false;
+}
+
+function requireAdminForManagement() {
+  if (!requireLoginForKnowledge()) return false;
+  if (currentUser.is_admin) return true;
+  window.alert("需要管理员权限，普通用户只能查询健康资料。\n请联系管理员处理账号权限。");
+  return false;
+}
+
+function refreshAuthenticatedView() {
+  loadKnowledgeStatus();
+  loadConversationList();
 }
 
 function openAccountDialog() {
@@ -287,6 +323,7 @@ async function loadCurrentUser() {
     }
     currentUser = await response.json();
     renderAccountState();
+    refreshAuthenticatedView();
   } catch (_error) {
     clearAuthSession();
   }
@@ -449,7 +486,7 @@ async function openReferenceDialog(reference) {
   }
 
   const [response, knowledgeStatusData] = await Promise.all([
-    fetch(`${config.endpoint}/${reference.record_id}`),
+    apiFetch(`${config.endpoint}/${reference.record_id}`),
     getKnowledgeStatusData().catch(() => null),
   ]);
   const data = await response.json();
@@ -569,7 +606,7 @@ async function submitFeedback(container, assistantMessageId, helpful) {
   status.textContent = "正在保存...";
 
   try {
-    const response = await fetch("/feedback", {
+    const response = await apiFetch("/feedback", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -635,7 +672,7 @@ function renderConversationHistory(conversations) {
 
 async function loadConversationList() {
   try {
-    const response = await fetch("/conversations");
+    const response = await apiFetch("/conversations");
     const data = await response.json();
     if (!response.ok) throw new Error(getErrorMessage(data, "读取对话列表失败。"));
     renderConversationHistory(data);
@@ -646,7 +683,7 @@ async function loadConversationList() {
 
 async function loadConversation(nextConversationId) {
   try {
-    const response = await fetch(
+    const response = await apiFetch(
       `/conversations/${encodeURIComponent(nextConversationId)}/messages`,
     );
     const messages = await response.json();
@@ -678,7 +715,7 @@ async function exportConversation() {
   exportConversationButton.disabled = true;
   exportConversationButton.textContent = "正在导出";
   try {
-    const response = await fetch(
+    const response = await apiFetch(
       `/conversations/${encodeURIComponent(conversationId)}/export`,
     );
     if (!response.ok) {
@@ -707,7 +744,7 @@ async function deleteConversation(conversation) {
   if (!confirmed) return;
 
   try {
-    const response = await fetch(
+    const response = await apiFetch(
       `/conversations/${encodeURIComponent(conversation.conversation_id)}/messages`,
       { method: "DELETE" },
     );
@@ -748,21 +785,21 @@ async function loadKnowledgeStatus() {
 }
 
 async function getKnowledgeStatusData() {
-  const response = await fetch("/knowledge/status");
+  const response = await apiFetch("/knowledge/status");
   const data = await response.json();
   if (!response.ok) throw new Error(data.detail || "读取失败");
   return data;
 }
 
 async function getActiveRebuildJob() {
-  const response = await fetch("/knowledge/rebuild/jobs/active");
+  const response = await apiFetch("/knowledge/rebuild/jobs/active");
   const data = await response.json();
   if (!response.ok) throw new Error(getErrorMessage(data, "读取重建任务失败"));
   return data;
 }
 
 async function getRebuildJob(jobId) {
-  const response = await fetch(`/knowledge/rebuild/jobs/${jobId}`);
+  const response = await apiFetch(`/knowledge/rebuild/jobs/${jobId}`);
   const data = await response.json();
   if (!response.ok) throw new Error(getErrorMessage(data, "读取重建任务失败"));
   return data;
@@ -832,7 +869,7 @@ async function rebuildKnowledge() {
   rebuildKnowledgeButton.disabled = true;
   rebuildKnowledgeButton.textContent = "正在提交任务...";
   try {
-    const response = await fetch("/knowledge/rebuild/async", { method: "POST" });
+    const response = await apiFetch("/knowledge/rebuild/async", { method: "POST" });
     const data = await response.json();
     if (!response.ok) {
       if (response.status === 409) {
@@ -962,9 +999,9 @@ async function loadFeedbackDashboard() {
   dashboardStatus.textContent = "正在读取反馈数据...";
   try {
     const [summaryResponse, suggestionsResponse, recentResponse] = await Promise.all([
-      fetch("/feedback/summary"),
-      fetch("/feedback/improvement-suggestions"),
-      fetch("/feedback/recent?helpful=false&limit=10"),
+      apiFetch("/feedback/summary"),
+      apiFetch("/feedback/improvement-suggestions"),
+      apiFetch("/feedback/recent?helpful=false&limit=10"),
     ]);
     const [summary, suggestions, recentItems] = await Promise.all([
       summaryResponse.json(),
@@ -1214,7 +1251,7 @@ function renderEvaluationHistory(data) {
 async function loadEvaluationHistory() {
   evaluationHistoryStatus.textContent = "正在读取评测历史...";
   try {
-    const response = await fetch("/evaluation/history?limit=10");
+    const response = await apiFetch("/evaluation/history?limit=10");
     const data = await response.json();
     if (!response.ok) throw new Error(getErrorMessage(data, "读取评测历史失败。"));
     renderEvaluationHistory(data);
@@ -1226,7 +1263,7 @@ async function loadEvaluationHistory() {
 async function loadCustomEvaluationCases() {
   customEvaluationStatus.textContent = "正在读取自定义评测题...";
   try {
-    const response = await fetch("/evaluation/cases");
+    const response = await apiFetch("/evaluation/cases");
     const data = await response.json();
     if (!response.ok) throw new Error(getErrorMessage(data, "读取自定义评测题失败。"));
     renderCustomEvaluationCases(data);
@@ -1251,7 +1288,7 @@ async function addCustomEvaluationCase(event) {
   };
   customEvaluationStatus.textContent = "正在保存自定义题...";
   try {
-    const response = await fetch("/evaluation/cases", {
+    const response = await apiFetch("/evaluation/cases", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
@@ -1269,7 +1306,7 @@ async function deleteCustomEvaluationCase(caseId) {
   if (!window.confirm("删除这道自定义评测题吗？")) return;
   customEvaluationStatus.textContent = "正在删除自定义题...";
   try {
-    const response = await fetch(`/evaluation/cases/${caseId}`, { method: "DELETE" });
+    const response = await apiFetch(`/evaluation/cases/${caseId}`, { method: "DELETE" });
     if (!response.ok) {
       const data = await response.json();
       throw new Error(getErrorMessage(data, "删除自定义题失败。"));
@@ -1294,7 +1331,7 @@ async function runRagEvaluation() {
   evaluationResults.innerHTML = "";
   evaluationQualityGate.innerHTML = "";
   try {
-    const response = await fetch("/evaluation/run", { method: "POST" });
+    const response = await apiFetch("/evaluation/run", { method: "POST" });
     const data = await response.json();
     if (!response.ok) throw new Error(getErrorMessage(data, "评测失败。"));
     renderRagEvaluation(data);
@@ -1322,7 +1359,7 @@ async function compareRetrievalStrategies() {
   comparisonMetrics.innerHTML = "";
   comparisonResults.innerHTML = "";
   try {
-    const response = await fetch("/evaluation/compare", { method: "POST" });
+    const response = await apiFetch("/evaluation/compare", { method: "POST" });
     const data = await response.json();
     if (!response.ok) throw new Error(getErrorMessage(data, "检索对比失败。"));
     renderRetrievalComparison(data);
@@ -1349,7 +1386,7 @@ async function diagnoseCurrentRetrieval() {
   diagnosisMetrics.innerHTML = "";
   diagnosisResults.innerHTML = "";
   try {
-    const response = await fetch("/evaluation/diagnose", { method: "POST" });
+    const response = await apiFetch("/evaluation/diagnose", { method: "POST" });
     const data = await response.json();
     if (!response.ok) throw new Error(getErrorMessage(data, "检索诊断失败。"));
     renderRetrievalDiagnosis(data);
@@ -1445,7 +1482,7 @@ async function loadReviewQueue() {
   reviewResults.innerHTML = "";
   refreshReviewQueueButton.disabled = true;
   try {
-    const response = await fetch("/knowledge/review-queue");
+    const response = await apiFetch("/knowledge/review-queue");
     const data = await response.json();
     if (!response.ok) throw new Error(getErrorMessage(data, "读取待核验资料失败。"));
     renderReviewQueue(data);
@@ -1469,7 +1506,7 @@ async function submitReviewBatch(event) {
   reviewBatchStatus.className = "review-batch-status";
   reviewBatchStatus.textContent = "正在保存审核信息...";
   try {
-    const response = await fetch("/knowledge/review-queue/batch-update", {
+    const response = await apiFetch("/knowledge/review-queue/batch-update", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
@@ -1529,7 +1566,7 @@ async function loadReviewHistory() {
   reviewHistoryResults.innerHTML = "";
   refreshReviewHistoryButton.disabled = true;
   try {
-    const response = await fetch("/knowledge/review-logs");
+    const response = await apiFetch("/knowledge/review-logs");
     const data = await response.json();
     if (!response.ok) throw new Error(getErrorMessage(data, "读取审核记录失败。"));
     renderReviewHistory(data);
@@ -1589,7 +1626,7 @@ async function loadKnowledgeVersions() {
   versionResults.innerHTML = "";
   refreshKnowledgeVersionsButton.disabled = true;
   try {
-    const response = await fetch("/knowledge/versions");
+    const response = await apiFetch("/knowledge/versions");
     const data = await response.json();
     if (!response.ok) throw new Error(getErrorMessage(data, "读取版本失败。"));
     renderKnowledgeVersions(data);
@@ -1655,7 +1692,7 @@ async function loadRebuildJobHistory() {
   rebuildHistoryResults.innerHTML = "";
   refreshRebuildHistoryButton.disabled = true;
   try {
-    const response = await fetch("/knowledge/rebuild/jobs?limit=20");
+    const response = await apiFetch("/knowledge/rebuild/jobs?limit=20");
     const data = await response.json();
     if (!response.ok) throw new Error(getErrorMessage(data, "读取重建任务失败。"));
     renderRebuildJobHistory(data);
@@ -1676,7 +1713,7 @@ async function retryRebuildJob(job, button) {
   button.disabled = true;
   button.textContent = "正在创建重试任务...";
   try {
-    const response = await fetch(`/knowledge/rebuild/jobs/${job.id}/retry`, {
+    const response = await apiFetch(`/knowledge/rebuild/jobs/${job.id}/retry`, {
       method: "POST",
     });
     const data = await response.json();
@@ -1699,7 +1736,7 @@ async function restoreKnowledgeVersion(version, button) {
   button.disabled = true;
   button.textContent = "正在恢复...";
   try {
-    const response = await fetch(`/knowledge/versions/${version.id}/restore`, {
+    const response = await apiFetch(`/knowledge/versions/${version.id}/restore`, {
       method: "POST",
     });
     const data = await response.json();
@@ -1772,7 +1809,7 @@ async function searchKnowledge(event) {
   searchStatus.textContent = "正在搜索...";
   clearSearchResults();
   try {
-    const response = await fetch(`/knowledge/search?q=${encodeURIComponent(query)}`);
+    const response = await apiFetch(`/knowledge/search?q=${encodeURIComponent(query)}`);
     const data = await response.json();
     if (!response.ok) throw new Error(getErrorMessage(data, "搜索失败。"));
     renderSearchResults(data);
@@ -1790,7 +1827,7 @@ async function createKnowledgeEntry(formElement, endpoint) {
   submitButton.disabled = true;
 
   try {
-    const response = await fetch(endpoint, {
+    const response = await apiFetch(endpoint, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
@@ -1825,7 +1862,7 @@ async function uploadKnowledgeFile(event) {
   submitButton.disabled = true;
 
   try {
-    const response = await fetch("/documents/upload-batch", {
+    const response = await apiFetch("/documents/upload-batch", {
       method: "POST",
       body: formData,
     });
@@ -1857,7 +1894,7 @@ async function openEditDialog(item) {
   if (!config) return;
 
   try {
-    const response = await fetch(`${config.endpoint}/${item.record_id}`);
+    const response = await apiFetch(`${config.endpoint}/${item.record_id}`);
     const data = await response.json();
     if (!response.ok) throw new Error(getErrorMessage(data, "读取资料失败。"));
     activeEdit = { id: item.record_id, type: item.type, config };
@@ -1904,7 +1941,7 @@ async function saveEdit(event) {
   editStatus.textContent = "正在保存修改...";
 
   try {
-    const response = await fetch(
+    const response = await apiFetch(
       `${activeEdit.config.endpoint}/${activeEdit.id}`,
       {
         method: "PUT",
@@ -1940,7 +1977,7 @@ async function deleteKnowledgeEntry(item) {
   entryStatus.className = "manager-status";
   entryStatus.textContent = `正在删除“${item.title}”...`;
   try {
-    const response = await fetch(`${config.endpoint}/${item.record_id}`, {
+    const response = await apiFetch(`${config.endpoint}/${item.record_id}`, {
       method: "DELETE",
     });
     if (!response.ok) {
@@ -1959,7 +1996,7 @@ async function deleteKnowledgeEntry(item) {
 }
 
 async function requestStreamingAnswer(question) {
-  const response = await fetch("/ask/stream", {
+  const response = await apiFetch("/ask/stream", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -2025,6 +2062,7 @@ async function requestStreamingAnswer(question) {
 
 form.addEventListener("submit", async (event) => {
   event.preventDefault();
+  if (!requireLoginForKnowledge()) return;
   const question = questionInput.value.trim();
   if (!question) return;
 
@@ -2055,7 +2093,9 @@ document.querySelectorAll("[data-account-mode]").forEach((tab) => {
   tab.addEventListener("click", () => setAccountMode(tab.dataset.accountMode));
 });
 refreshHistoryButton.addEventListener("click", loadConversationList);
-rebuildKnowledgeButton.addEventListener("click", rebuildKnowledge);
+rebuildKnowledgeButton.addEventListener("click", () => {
+  if (requireAdminForManagement()) rebuildKnowledge();
+});
 refreshReviewQueueButton.addEventListener("click", loadReviewQueue);
 reviewBatchForm.addEventListener("submit", submitReviewBatch);
 refreshReviewHistoryButton.addEventListener("click", loadReviewHistory);
@@ -2067,9 +2107,11 @@ diagnoseRetrievalButton.addEventListener("click", diagnoseCurrentRetrieval);
 refreshEvaluationHistoryButton.addEventListener("click", loadEvaluationHistory);
 customEvaluationForm.addEventListener("submit", addCustomEvaluationCase);
 managerToggleButton.addEventListener("click", () => {
+  if (!requireAdminForManagement()) return;
   setManagerVisible(knowledgeManager.classList.contains("is-hidden"));
 });
 feedbackDashboardToggle.addEventListener("click", () => {
+  if (!requireAdminForManagement()) return;
   setFeedbackDashboardVisible(qualityDashboard.classList.contains("is-hidden"));
 });
 refreshFeedbackButton.addEventListener("click", loadFeedbackDashboard);
@@ -2094,10 +2136,9 @@ document.querySelector("#document-form").addEventListener("submit", (event) => {
 });
 loadKnowledgeStatus();
 setAccountMode("login");
+updatePermissionUI();
 loadCurrentUser();
 saveActiveConversation();
-loadConversationList();
-loadConversation(conversationId);
 
 questionInput.addEventListener("keydown", (event) => {
   if (event.key === "Enter" && !event.shiftKey) {

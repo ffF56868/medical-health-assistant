@@ -141,6 +141,7 @@ class User(SQLModel, table=True):
     account: str = Field(index=True, unique=True, max_length=200)
     password_hash: str = Field(max_length=300)
     is_active: bool = Field(default=True)
+    is_admin: bool = Field(default=False, index=True)
     created_at: datetime = Field(
         default_factory=lambda: datetime.now(UTC),
         index=True,

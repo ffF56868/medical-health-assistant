@@ -4,7 +4,8 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlmodel import Session, select
 
 from app.database import get_session
-from app.models import AnswerFeedback, ChatMessage
+from app.models import AnswerFeedback, ChatMessage, User
+from app.routers.auth import get_current_user, require_admin
 from app.schemas import (
     FeedbackCreate,
     FeedbackDetail,
@@ -15,7 +16,11 @@ from app.schemas import (
 )
 
 
-router = APIRouter(prefix="/feedback", tags=["feedback"])
+router = APIRouter(
+    prefix="/feedback",
+    tags=["feedback"],
+    dependencies=[Depends(get_current_user)],
+)
 
 
 def get_question_for_answer(
@@ -61,7 +66,10 @@ def create_or_update_feedback(
 
 
 @router.get("/summary", response_model=FeedbackSummary)
-def get_feedback_summary(session: Session = Depends(get_session)):
+def get_feedback_summary(
+    _admin: User = Depends(require_admin),
+    session: Session = Depends(get_session),
+):
     feedback_items = session.exec(select(AnswerFeedback)).all()
     total_count = len(feedback_items)
     helpful_count = sum(item.helpful for item in feedback_items)
@@ -77,6 +85,7 @@ def get_feedback_summary(session: Session = Depends(get_session)):
 def list_recent_feedback(
     helpful: bool | None = None,
     limit: int = Query(default=20, ge=1, le=100),
+    _admin: User = Depends(require_admin),
     session: Session = Depends(get_session),
 ):
     statement = select(AnswerFeedback).order_by(AnswerFeedback.created_at.desc())
@@ -115,6 +124,7 @@ def list_recent_feedback(
 )
 def get_improvement_suggestions(
     limit: int = Query(default=5, ge=1, le=20),
+    _admin: User = Depends(require_admin),
     session: Session = Depends(get_session),
 ):
     feedback_items = session.exec(

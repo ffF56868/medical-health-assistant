@@ -11,6 +11,7 @@ from sqlmodel import Session, select
 
 from app.database import get_session
 from app.models import ChatMessage
+from app.routers.auth import get_current_user
 from app.schemas import AskRequest, AskResponse
 from app.source_metadata import needs_source_review
 from app.vector_store import (
@@ -21,7 +22,11 @@ from app.vector_store import (
 )
 
 
-router = APIRouter(prefix="/ask", tags=["ask"])
+router = APIRouter(
+    prefix="/ask",
+    tags=["ask"],
+    dependencies=[Depends(get_current_user)],
+)
 URGENT_WARNING_KEYWORDS = (
     "呼吸困难",
     "持续胸痛",

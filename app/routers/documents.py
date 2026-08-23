@@ -5,7 +5,8 @@ from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
 from sqlmodel import Session, select
 
 from app.database import get_session
-from app.models import KnowledgeDocument
+from app.models import KnowledgeDocument, User
+from app.routers.auth import get_current_user, require_admin
 from app.schemas import (
     DocumentUploadBatchResponse,
     DocumentUploadError,
@@ -15,7 +16,11 @@ from app.schemas import (
 )
 
 
-router = APIRouter(prefix="/documents", tags=["documents"])
+router = APIRouter(
+    prefix="/documents",
+    tags=["documents"],
+    dependencies=[Depends(get_current_user)],
+)
 
 ALLOWED_SUFFIXES = {".md", ".txt"}
 MAX_DOCUMENT_BYTES = 200_000
@@ -66,6 +71,7 @@ def build_uploaded_document(filename: str, content: str) -> KnowledgeDocument:
 @router.post("", response_model=KnowledgeDocumentRead, status_code=201)
 def create_document(
     document_data: KnowledgeDocumentCreate,
+    _admin: User = Depends(require_admin),
     session: Session = Depends(get_session),
 ):
     duplicate = session.exec(
@@ -88,6 +94,7 @@ def create_document(
 @router.post("/upload", response_model=KnowledgeDocumentRead, status_code=201)
 async def upload_document(
     file: UploadFile = File(...),
+    _admin: User = Depends(require_admin),
     session: Session = Depends(get_session),
 ):
     try:
@@ -117,6 +124,7 @@ async def upload_document(
 )
 async def upload_documents(
     files: list[UploadFile] = File(...),
+    _admin: User = Depends(require_admin),
     session: Session = Depends(get_session),
 ):
     """Import several text files and report per-file validation failures."""
@@ -210,6 +218,7 @@ def get_document(
 def update_document(
     document_id: int,
     document_data: KnowledgeDocumentCreate,
+    _admin: User = Depends(require_admin),
     session: Session = Depends(get_session),
 ):
     document = session.get(KnowledgeDocument, document_id)
@@ -242,6 +251,7 @@ def update_document(
 @router.delete("/{document_id}", status_code=204)
 def delete_document(
     document_id: int,
+    _admin: User = Depends(require_admin),
     session: Session = Depends(get_session),
 ):
     document = session.get(KnowledgeDocument, document_id)

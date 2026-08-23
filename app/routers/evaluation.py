@@ -5,6 +5,7 @@ from sqlmodel import Session, select
 
 from app.database import get_session
 from app.models import KnowledgeIndexState, RAGEvaluationCase, RAGEvaluationRun
+from app.routers.auth import require_admin
 from app.schemas import (
     RAGEvaluationCaseCreate,
     RAGEvaluationCaseListResponse,
@@ -33,7 +34,11 @@ from app.vector_store import (
 )
 
 
-router = APIRouter(prefix="/evaluation", tags=["evaluation"])
+router = APIRouter(
+    prefix="/evaluation",
+    tags=["evaluation"],
+    dependencies=[Depends(require_admin)],
+)
 BASELINE_RETRIEVAL_COUNT = 3
 
 # These cases intentionally verify retrieval only, not medical conclusions.

@@ -17,6 +17,7 @@ def strip_required_text(value: str) -> str:
 class UserRead(SQLModel):
     id: int
     account: str
+    is_admin: bool
     created_at: datetime
 
 

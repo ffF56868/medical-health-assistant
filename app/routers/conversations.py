@@ -6,10 +6,15 @@ from sqlmodel import Session, select
 
 from app.database import get_session
 from app.models import AnswerFeedback, ChatMessage
+from app.routers.auth import get_current_user
 from app.schemas import ChatMessageRead, ConversationSummary
 
 
-router = APIRouter(prefix="/conversations", tags=["conversations"])
+router = APIRouter(
+    prefix="/conversations",
+    tags=["conversations"],
+    dependencies=[Depends(get_current_user)],
+)
 
 
 def parse_response_metadata(message: ChatMessage) -> dict:

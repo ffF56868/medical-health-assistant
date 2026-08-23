@@ -18,7 +18,9 @@ from app.models import (
     KnowledgeRebuildJob,
     KnowledgeReviewLog,
     KnowledgeSnapshot,
+    User,
 )
+from app.routers.auth import get_current_user, require_admin
 from app.schemas import (
     KnowledgeRebuildResponse,
     KnowledgeRebuildJobListResponse,
@@ -40,7 +42,11 @@ from app.source_metadata import get_source_review_reasons, needs_source_review
 from app.vector_store import get_knowledge_status, rebuild_vector_store
 
 
-router = APIRouter(prefix="/knowledge", tags=["knowledge"])
+router = APIRouter(
+    prefix="/knowledge",
+    tags=["knowledge"],
+    dependencies=[Depends(get_current_user)],
+)
 
 ACTIVE_REBUILD_STATUSES = {"pending", "running"}
 REBUILD_JOB_TIMEOUT_SECONDS = int(
@@ -103,7 +109,10 @@ def get_status(session: Session = Depends(get_session)):
 
 
 @router.post("/rebuild", response_model=KnowledgeRebuildResponse)
-def rebuild_knowledge(session: Session = Depends(get_session)):
+def rebuild_knowledge(
+    _admin: User = Depends(require_admin),
+    session: Session = Depends(get_session),
+):
     snapshot, snapshot_created = create_knowledge_snapshot(session, "rebuild")
     session.commit()
     document_count, chunk_count = rebuild_vector_store(session)
@@ -197,6 +206,7 @@ def run_rebuild_job(job_id: int) -> None:
 )
 def start_async_rebuild(
     background_tasks: BackgroundTasks,
+    _admin: User = Depends(require_admin),
     session: Session = Depends(get_session),
 ):
     with rebuild_start_lock:
@@ -220,7 +230,10 @@ def start_async_rebuild(
     "/rebuild/jobs/active",
     response_model=KnowledgeRebuildJobRead | None,
 )
-def get_active_rebuild_job_status(session: Session = Depends(get_session)):
+def get_active_rebuild_job_status(
+    _admin: User = Depends(require_admin),
+    session: Session = Depends(get_session),
+):
     recover_stale_rebuild_jobs(session)
     job = get_active_rebuild_job(session)
     return job
@@ -232,6 +245,7 @@ def get_active_rebuild_job_status(session: Session = Depends(get_session)):
 )
 def list_rebuild_jobs(
     limit: int = Query(default=20, ge=1, le=100),
+    _admin: User = Depends(require_admin),
     session: Session = Depends(get_session),
 ):
     recover_stale_rebuild_jobs(session)
@@ -252,6 +266,7 @@ def list_rebuild_jobs(
 def retry_rebuild_job(
     job_id: int,
     background_tasks: BackgroundTasks,
+    _admin: User = Depends(require_admin),
     session: Session = Depends(get_session),
 ):
     with rebuild_start_lock:
@@ -285,6 +300,7 @@ def retry_rebuild_job(
 )
 def get_rebuild_job_status(
     job_id: int,
+    _admin: User = Depends(require_admin),
     session: Session = Depends(get_session),
 ):
     recover_stale_rebuild_jobs(session)
@@ -297,6 +313,7 @@ def get_rebuild_job_status(
 @router.get("/versions", response_model=KnowledgeVersionListResponse)
 def list_knowledge_versions(
     limit: int = Query(default=20, ge=1, le=100),
+    _admin: User = Depends(require_admin),
     session: Session = Depends(get_session),
 ):
     current_hash = get_current_snapshot_hash(session)
@@ -327,6 +344,7 @@ def list_knowledge_versions(
 )
 def restore_knowledge_version(
     snapshot_id: int,
+    _admin: User = Depends(require_admin),
     session: Session = Depends(get_session),
 ):
     snapshot = session.get(KnowledgeSnapshot, snapshot_id)
@@ -360,6 +378,7 @@ def restore_knowledge_version(
 @router.get("/review-queue", response_model=KnowledgeReviewResponse)
 def get_review_queue(
     limit: int = Query(default=100, ge=1, le=500),
+    _admin: User = Depends(require_admin),
     session: Session = Depends(get_session),
 ):
     """List sources that still need human verification or refresh."""
@@ -393,6 +412,7 @@ def get_review_queue(
 )
 def batch_update_review_metadata(
     update_data: KnowledgeReviewBatchUpdate,
+    _admin: User = Depends(require_admin),
     session: Session = Depends(get_session),
 ):
     """Apply one verified source record to several selected knowledge items."""
@@ -460,6 +480,7 @@ def batch_update_review_metadata(
 @router.get("/review-logs", response_model=KnowledgeReviewLogResponse)
 def list_review_logs(
     limit: int = Query(default=20, ge=1, le=100),
+    _admin: User = Depends(require_admin),
     session: Session = Depends(get_session),
 ):
     """Return recent source review actions for traceability."""

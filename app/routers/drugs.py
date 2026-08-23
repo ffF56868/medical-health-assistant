@@ -4,16 +4,22 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlmodel import Session, select
 
 from app.database import get_session
-from app.models import Drug
+from app.models import Drug, User
+from app.routers.auth import get_current_user, require_admin
 from app.schemas import DrugCreate, DrugRead
 
 
-router = APIRouter(prefix="/drugs", tags=["drugs"])
+router = APIRouter(
+    prefix="/drugs",
+    tags=["drugs"],
+    dependencies=[Depends(get_current_user)],
+)
 
 
 @router.post("", response_model=DrugRead, status_code=201)
 def create_drug(
     drug_data: DrugCreate,
+    _admin: User = Depends(require_admin),
     session: Session = Depends(get_session),
 ):
     existing_drug = session.exec(
@@ -61,6 +67,7 @@ def get_drug(
 def update_drug(
     drug_id: int,
     drug_data: DrugCreate,
+    _admin: User = Depends(require_admin),
     session: Session = Depends(get_session),
 ):
     drug = session.get(Drug, drug_id)
@@ -94,6 +101,7 @@ def update_drug(
 @router.delete("/{drug_id}", status_code=204)
 def delete_drug(
     drug_id: int,
+    _admin: User = Depends(require_admin),
     session: Session = Depends(get_session),
 ):
     drug = session.get(Drug, drug_id)
