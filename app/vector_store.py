@@ -10,6 +10,13 @@ from langchain_text_splitters import RecursiveCharacterTextSplitter
 from sqlmodel import Session, select
 
 from app.models import Condition, Drug, KnowledgeDocument, KnowledgeIndexState
+from app.cache import (
+    KNOWLEDGE_STATUS_CACHE_KEY,
+    KNOWLEDGE_STATUS_CACHE_TTL_SECONDS,
+    get_cached_json,
+    invalidate_knowledge_status_cache,
+    set_cached_json,
+)
 from app.source_metadata import get_source_tier_label, needs_source_review
 
 
@@ -195,6 +202,10 @@ def get_knowledge_fingerprint(documents: list[Document]) -> str:
 
 
 def get_knowledge_status(session: Session) -> dict:
+    cached_status = get_cached_json(KNOWLEDGE_STATUS_CACHE_KEY)
+    if isinstance(cached_status, dict) and "is_current" in cached_status:
+        return cached_status
+
     documents = build_knowledge_documents(session)
     current_hash = get_knowledge_fingerprint(documents)
     index_state = session.get(KnowledgeIndexState, 1)
@@ -207,7 +218,7 @@ def get_knowledge_status(session: Session) -> dict:
         )
     )
 
-    return {
+    status = {
         "is_current": (
             index_state is not None
             and index_state.content_hash == current_hash
@@ -219,6 +230,12 @@ def get_knowledge_status(session: Session) -> dict:
         ),
         "indexed_at": index_state.indexed_at if index_state is not None else None,
     }
+    set_cached_json(
+        KNOWLEDGE_STATUS_CACHE_KEY,
+        status,
+        KNOWLEDGE_STATUS_CACHE_TTL_SECONDS,
+    )
+    return status
 
 
 def rebuild_vector_store(session: Session) -> tuple[int, int]:
@@ -248,6 +265,7 @@ def rebuild_vector_store(session: Session) -> tuple[int, int]:
     )
     session.merge(index_state)
     session.commit()
+    invalidate_knowledge_status_cache()
 
     source_document_count = sum(
         len(records)

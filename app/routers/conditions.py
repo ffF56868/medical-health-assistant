@@ -4,6 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlmodel import Session, select
 
 from app.database import get_session
+from app.cache import invalidate_knowledge_status_cache
 from app.models import Condition, User
 from app.routers.auth import get_current_user, require_admin
 from app.schemas import ConditionCreate, ConditionRead
@@ -33,6 +34,7 @@ def create_condition(
     condition.updated_at = datetime.now(UTC)
     session.add(condition)
     session.commit()
+    invalidate_knowledge_status_cache()
     session.refresh(condition)
     return condition
 
@@ -94,6 +96,7 @@ def update_condition(
     condition.updated_at = datetime.now(UTC)
     session.add(condition)
     session.commit()
+    invalidate_knowledge_status_cache()
     session.refresh(condition)
     return condition
 
@@ -111,3 +114,4 @@ def delete_condition(
 
     session.delete(condition)
     session.commit()
+    invalidate_knowledge_status_cache()

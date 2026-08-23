@@ -5,6 +5,7 @@ from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
 from sqlmodel import Session, select
 
 from app.access import accessible_documents_statement, can_access_document
+from app.cache import invalidate_knowledge_status_cache
 from app.database import get_session
 from app.models import KnowledgeDocument, User
 from app.routers.auth import get_current_user, require_admin
@@ -92,6 +93,7 @@ def create_document(
     document.updated_at = datetime.now(UTC)
     session.add(document)
     session.commit()
+    invalidate_knowledge_status_cache()
     session.refresh(document)
     return document
 
@@ -118,6 +120,7 @@ async def upload_document(
 
     session.add(document)
     session.commit()
+    invalidate_knowledge_status_cache()
     session.refresh(document)
     return document
 
@@ -172,6 +175,7 @@ async def upload_documents(
             errors.append(DocumentUploadError(filename=filename, detail=str(error)))
 
     session.commit()
+    invalidate_knowledge_status_cache()
     items: list[DocumentUploadItem] = []
     for filename, document in created_documents:
         session.refresh(document)
@@ -259,6 +263,7 @@ def update_document(
     document.updated_at = datetime.now(UTC)
     session.add(document)
     session.commit()
+    invalidate_knowledge_status_cache()
     session.refresh(document)
     return document
 
@@ -276,3 +281,4 @@ def delete_document(
 
     session.delete(document)
     session.commit()
+    invalidate_knowledge_status_cache()

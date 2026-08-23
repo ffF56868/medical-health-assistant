@@ -6,6 +6,7 @@ from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
 from sqlmodel import Session, select
 
 from app.access import accessible_documents_statement
+from app.cache import invalidate_knowledge_status_cache
 from app.database import engine, get_session
 from app.knowledge_versions import (
     create_knowledge_snapshot,
@@ -367,6 +368,8 @@ def restore_knowledge_version(
             detail="恢复后重建向量库失败，当前版本已保留，可重试恢复",
         ) from error
 
+    invalidate_knowledge_status_cache()
+
     return KnowledgeRestoreResponse(
         message="已恢复知识库版本，并完成向量重建",
         restored_version_id=snapshot.id,
@@ -451,6 +454,7 @@ def batch_update_review_metadata(
             )
         )
     session.commit()
+    invalidate_knowledge_status_cache()
     items: list[KnowledgeReviewItem] = []
     for record_type, record in updated_records:
         session.refresh(record)

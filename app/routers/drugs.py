@@ -4,6 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlmodel import Session, select
 
 from app.database import get_session
+from app.cache import invalidate_knowledge_status_cache
 from app.models import Drug, User
 from app.routers.auth import get_current_user, require_admin
 from app.schemas import DrugCreate, DrugRead
@@ -33,6 +34,7 @@ def create_drug(
     drug.updated_at = datetime.now(UTC)
     session.add(drug)
     session.commit()
+    invalidate_knowledge_status_cache()
     session.refresh(drug)
     return drug
 
@@ -94,6 +96,7 @@ def update_drug(
     drug.updated_at = datetime.now(UTC)
     session.add(drug)
     session.commit()
+    invalidate_knowledge_status_cache()
     session.refresh(drug)
     return drug
 
@@ -111,3 +114,4 @@ def delete_drug(
 
     session.delete(drug)
     session.commit()
+    invalidate_knowledge_status_cache()

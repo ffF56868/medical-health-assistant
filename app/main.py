@@ -14,6 +14,7 @@ if not os.getenv("OPENAI_BASE_URL", "").strip():
     os.environ.pop("OPENAI_BASE_URL", None)
 
 from app.database import create_db_and_tables, get_session
+from app.cache import check_redis
 from app.audit import record_admin_request
 from app.routers import (
     ask,
@@ -84,6 +85,7 @@ def health_check(session: Session = Depends(get_session)):
         status="ok" if knowledge_status["is_current"] else "degraded",
         service="medical-health-assistant",
         database="connected",
+        cache="connected" if check_redis() else "unavailable",
         knowledge_base_current=knowledge_status["is_current"],
         document_count=knowledge_status["document_count"],
         chunk_count=knowledge_status["chunk_count"],

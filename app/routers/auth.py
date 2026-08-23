@@ -1,3 +1,4 @@
+import hashlib
 from datetime import UTC, datetime, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
@@ -6,6 +7,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, select
 
 from app.database import get_session
+from app.cache import LOGIN_RATE_LIMIT_PER_MINUTE, consume_fixed_window_limit
 from app.models import LoginAttempt, SecurityAuditLog, User, UserSession
 from app.schemas import (
     AuthLoginRequest,
@@ -155,6 +157,11 @@ def _request_ip(request: Request) -> str:
     return request.client.host if request.client else "unknown"
 
 
+def _login_rate_limit_key(account: str, source_ip: str) -> str:
+    identifier = f"{account}|{source_ip}".encode("utf-8")
+    return f"medical-health:rate:login:{hashlib.sha256(identifier).hexdigest()}"
+
+
 def _get_login_attempt(
     session: Session,
     account: str,
@@ -192,13 +199,22 @@ def login(
     request: Request,
     session: Session = Depends(get_session),
 ):
+    source_ip = _request_ip(request)
+    if not consume_fixed_window_limit(
+        _login_rate_limit_key(payload.account, source_ip),
+        LOGIN_RATE_LIMIT_PER_MINUTE,
+    ):
+        raise HTTPException(
+            status_code=429,
+            detail="登录请求过于频繁，请稍后再试",
+        )
+
     user = session.exec(select(User).where(User.account == payload.account)).first()
     if user is None:
         raise HTTPException(status_code=401, detail="账号或密码错误")
     if not user.is_active:
         raise HTTPException(status_code=401, detail="账号不可用")
 
-    source_ip = _request_ip(request)
     attempt = _get_login_attempt(session, user.account, source_ip)
     if attempt and attempt.locked_until and not is_expired(attempt.locked_until):
         raise HTTPException(

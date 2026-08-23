@@ -669,6 +669,7 @@ class HealthResponse(SQLModel):
     status: str
     service: str
     database: str
+    cache: str
     knowledge_base_current: bool
     document_count: int
     chunk_count: int

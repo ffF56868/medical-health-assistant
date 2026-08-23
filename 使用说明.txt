@@ -4,7 +4,7 @@
 
 最重要的数据流：
 网页 index.html -> 网页逻辑 app.js -> FastAPI main.py -> 各个 router
--> SQLite / Chroma / OpenAI -> 把答案返回网页。
+-> MySQL / Redis / Chroma / OpenAI -> 把答案返回网页。
 
 建议阅读顺序：
 main.py -> models.py -> schemas.py -> routers/ask.py -> vector_store.py -> static/app.js
@@ -17,7 +17,12 @@ app/main.py
 
 app/database.py
 - 数据库连接与初始化。
-- 决定 SQLite 数据库位置，也会为旧数据库自动补充新字段，不删除旧数据。
+- 正式运行时连接 MySQL；也保留 SQLite 兼容逻辑，旧 SQLite 文件作为迁移前备份不会删除。
+
+app/cache.py
+- Redis 缓存与短时间登录限流。
+- 缓存知识库状态，资料新增、修改、删除或重建后自动清除缓存。
+- Redis 暂时不可用时 API 会回退到 MySQL，不会让服务整体不可用。
 
 app/models.py
 - 数据表蓝图。
@@ -111,7 +116,8 @@ Dockerfile
 
 docker-compose.yml
 - 正式运行配置。
-- 服务固定端口是 8003，加载 .env，并把数据库和 Chroma 保存到 Docker Volume 里。
+- 服务固定端口是 8003，加载 .env。
+- MySQL 保存业务数据，Redis 保存短期缓存和限流计数，Chroma 保存向量数据；它们都使用 Docker Volume 持久化。
 
 docker-compose.test.yml
 - 测试专用 Docker 配置。
@@ -185,7 +191,7 @@ sample_documents/睡眠健康提示.md
 
 medical_health.db
 - 本地 SQLite 数据库文件。
-- Docker 正式运行时，持续使用的数据主要放在 Docker Volume 里。
+- 是迁移前的 SQLite 备份；正式 API 已使用 Docker 内的 MySQL。
 
 chroma_db/
 - 本地 Chroma 向量数据目录。
