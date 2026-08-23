@@ -155,3 +155,25 @@ class UserSession(SQLModel, table=True):
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     expires_at: datetime
     revoked_at: datetime | None = None
+
+
+class LoginAttempt(SQLModel, table=True):
+    id: int | None = Field(default=None, primary_key=True)
+    account: str = Field(index=True, max_length=200)
+    source_ip: str = Field(max_length=64)
+    failed_count: int = Field(default=0)
+    locked_until: datetime | None = None
+    last_failed_at: datetime | None = None
+
+
+class SecurityAuditLog(SQLModel, table=True):
+    id: int | None = Field(default=None, primary_key=True)
+    user_id: int | None = Field(default=None, index=True)
+    account: str = Field(max_length=200)
+    method: str = Field(max_length=10)
+    path: str = Field(max_length=300)
+    status_code: int
+    created_at: datetime = Field(
+        default_factory=lambda: datetime.now(UTC),
+        index=True,
+    )

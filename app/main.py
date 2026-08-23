@@ -14,6 +14,7 @@ if not os.getenv("OPENAI_BASE_URL", "").strip():
     os.environ.pop("OPENAI_BASE_URL", None)
 
 from app.database import create_db_and_tables, get_session
+from app.audit import record_admin_request
 from app.routers import (
     ask,
     auth,
@@ -41,6 +42,23 @@ app = FastAPI(
     version="0.1.0",
     lifespan=lifespan,
 )
+
+
+@app.middleware("http")
+async def add_security_headers(request, call_next):
+    response = await call_next(request)
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+    response.headers["Permissions-Policy"] = (
+        "camera=(), microphone=(), geolocation=()"
+    )
+    if request.url.path.startswith("/auth/"):
+        response.headers["Cache-Control"] = "no-store"
+    admin_user = getattr(request.state, "admin_user", None)
+    if admin_user is not None and request.method in {"POST", "PUT", "PATCH", "DELETE"}:
+        record_admin_request(admin_user, request, response.status_code)
+    return response
 
 STATIC_DIR = Path(__file__).parent / "static"
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")

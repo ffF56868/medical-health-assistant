@@ -1,5 +1,6 @@
 import base64
 import hashlib
+import os
 import re
 import secrets
 from datetime import UTC, datetime, timedelta
@@ -9,7 +10,20 @@ PHONE_PATTERN = re.compile(r"(?:\+?86)?1[3-9]\d{9}")
 EMAIL_PATTERN = re.compile(r"[^@\s]+@[^@\s]+\.[^@\s]+")
 PASSWORD_MIN_LENGTH = 8
 PASSWORD_MAX_LENGTH = 32
-SESSION_DAYS = 7
+
+
+def _positive_int_env(name: str, default: int, maximum: int) -> int:
+    try:
+        value = int(os.getenv(name, str(default)))
+    except ValueError:
+        return default
+    return value if 1 <= value <= maximum else default
+
+
+SESSION_DAYS = _positive_int_env("SESSION_DAYS", 7, 30)
+MAX_ACTIVE_SESSIONS = _positive_int_env("MAX_ACTIVE_SESSIONS", 5, 20)
+MAX_LOGIN_FAILURES = _positive_int_env("MAX_LOGIN_FAILURES", 5, 20)
+LOGIN_LOCKOUT_MINUTES = _positive_int_env("LOGIN_LOCKOUT_MINUTES", 15, 1440)
 
 
 def normalize_account(value: str) -> str:

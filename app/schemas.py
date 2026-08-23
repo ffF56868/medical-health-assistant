@@ -21,6 +21,21 @@ class UserRead(SQLModel):
     created_at: datetime
 
 
+class SecurityAuditLogRead(SQLModel):
+    id: int
+    user_id: int | None = None
+    account: str
+    method: str
+    path: str
+    status_code: int
+    created_at: datetime
+
+
+class SecurityAuditLogListResponse(SQLModel):
+    total_count: int
+    logs: list[SecurityAuditLogRead] = Field(default_factory=list)
+
+
 class AuthRegisterRequest(SQLModel):
     account: str = Field(min_length=3, max_length=200)
     password: str = Field(min_length=1, max_length=100)

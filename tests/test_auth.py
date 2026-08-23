@@ -1,3 +1,6 @@
+from app.security import MAX_ACTIVE_SESSIONS, MAX_LOGIN_FAILURES
+
+
 def test_register_phone_normalizes_to_china_country_code(auth_client):
     response = auth_client.post(
         "/auth/register",
@@ -27,6 +30,56 @@ def test_register_email_is_case_insensitive(auth_client):
 
     assert response.status_code == 201
     assert response.json()["user"]["account"] == "health.example@example.com"
+
+
+def test_repeated_login_failures_are_temporarily_locked(auth_client):
+    payload = {
+        "account": "locked@example.com",
+        "password": "health123",
+        "confirm_password": "health123",
+    }
+    assert auth_client.post("/auth/register", json=payload).status_code == 201
+
+    for _ in range(MAX_LOGIN_FAILURES - 1):
+        response = auth_client.post(
+            "/auth/login",
+            json={"account": payload["account"], "password": "wrong123"},
+        )
+        assert response.status_code == 401
+
+    limited = auth_client.post(
+        "/auth/login",
+        json={"account": payload["account"], "password": "wrong123"},
+    )
+    assert limited.status_code == 429
+
+    still_limited = auth_client.post(
+        "/auth/login",
+        json={"account": payload["account"], "password": payload["password"]},
+    )
+    assert still_limited.status_code == 429
+
+
+def test_oldest_sessions_are_revoked_after_session_limit(auth_client):
+    payload = {
+        "account": "sessions@example.com",
+        "password": "health123",
+        "confirm_password": "health123",
+    }
+    first = auth_client.post("/auth/register", json=payload)
+    first_token = first.json()["access_token"]
+
+    for _ in range(MAX_ACTIVE_SESSIONS):
+        response = auth_client.post(
+            "/auth/login",
+            json={"account": payload["account"], "password": payload["password"]},
+        )
+        assert response.status_code == 200
+
+    response = auth_client.get(
+        "/auth/me", headers={"Authorization": f"Bearer {first_token}"}
+    )
+    assert response.status_code == 401
 
 
 def test_register_rejects_password_without_letters_or_digits(auth_client):

@@ -47,3 +47,12 @@ def test_admin_can_change_knowledge(client):
     )
 
     assert response.status_code == 201
+
+
+def test_only_admin_can_read_security_audit_logs(client, auth_client):
+    denied = auth_client.get("/auth/audit-logs")
+    assert denied.status_code == 401
+
+    allowed = client.get("/auth/audit-logs")
+    assert allowed.status_code == 200
+    assert "logs" in allowed.json()

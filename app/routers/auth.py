@@ -1,14 +1,18 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from datetime import UTC, datetime, timedelta
+
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, select
 
 from app.database import get_session
-from app.models import User, UserSession
+from app.models import LoginAttempt, SecurityAuditLog, User, UserSession
 from app.schemas import (
     AuthLoginRequest,
     AuthRegisterRequest,
     AuthResponse,
+    SecurityAuditLogListResponse,
+    SecurityAuditLogRead,
     UserRead,
 )
 from app.security import (
@@ -16,6 +20,9 @@ from app.security import (
     hash_access_token,
     hash_password,
     is_expired,
+    LOGIN_LOCKOUT_MINUTES,
+    MAX_ACTIVE_SESSIONS,
+    MAX_LOGIN_FAILURES,
     verify_password,
 )
 
@@ -29,6 +36,28 @@ def to_user_read(user: User) -> UserRead:
 
 
 def create_auth_response(session: Session, user: User) -> AuthResponse:
+    now = datetime.now(UTC)
+    active_sessions: list[UserSession] = []
+    for existing_session in session.exec(
+        select(UserSession)
+        .where(UserSession.user_id == user.id)
+        .order_by(UserSession.created_at)
+    ).all():
+        if existing_session.revoked_at is not None or is_expired(
+            existing_session.expires_at
+        ):
+            if existing_session.revoked_at is None:
+                existing_session.revoked_at = now
+                session.add(existing_session)
+            continue
+        active_sessions.append(existing_session)
+
+    # Keep forgotten or stolen tokens from remaining usable indefinitely.
+    sessions_to_revoke = max(0, len(active_sessions) - MAX_ACTIVE_SESSIONS + 1)
+    for old_session in active_sessions[:sessions_to_revoke]:
+        old_session.revoked_at = now
+        session.add(old_session)
+
     access_token, expires_at = create_access_token()
     session.add(
         UserSession(
@@ -83,12 +112,16 @@ def get_current_user(
     return user
 
 
-def require_admin(current_user: User = Depends(get_current_user)) -> User:
+def require_admin(
+    request: Request,
+    current_user: User = Depends(get_current_user),
+) -> User:
     if not current_user.is_admin:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="需要管理员权限",
         )
+    request.state.admin_user = current_user
     return current_user
 
 
@@ -118,16 +151,79 @@ def register(
     return create_auth_response(session, user)
 
 
+def _request_ip(request: Request) -> str:
+    return request.client.host if request.client else "unknown"
+
+
+def _get_login_attempt(
+    session: Session,
+    account: str,
+    source_ip: str,
+) -> LoginAttempt | None:
+    return session.exec(
+        select(LoginAttempt).where(
+            LoginAttempt.account == account,
+            LoginAttempt.source_ip == source_ip,
+        )
+    ).first()
+
+
+def _record_failed_login(
+    session: Session,
+    account: str,
+    source_ip: str,
+    attempt: LoginAttempt | None,
+) -> bool:
+    now = datetime.now(UTC)
+    attempt = attempt or LoginAttempt(account=account, source_ip=source_ip)
+    attempt.failed_count += 1
+    attempt.last_failed_at = now
+    is_now_locked = attempt.failed_count >= MAX_LOGIN_FAILURES
+    if is_now_locked:
+        attempt.locked_until = now + timedelta(minutes=LOGIN_LOCKOUT_MINUTES)
+    session.add(attempt)
+    session.commit()
+    return is_now_locked
+
+
 @router.post("/login", response_model=AuthResponse)
 def login(
     payload: AuthLoginRequest,
+    request: Request,
     session: Session = Depends(get_session),
 ):
     user = session.exec(select(User).where(User.account == payload.account)).first()
-    if user is None or not verify_password(payload.password, user.password_hash):
+    if user is None:
         raise HTTPException(status_code=401, detail="账号或密码错误")
     if not user.is_active:
         raise HTTPException(status_code=401, detail="账号不可用")
+
+    source_ip = _request_ip(request)
+    attempt = _get_login_attempt(session, user.account, source_ip)
+    if attempt and attempt.locked_until and not is_expired(attempt.locked_until):
+        raise HTTPException(
+            status_code=429,
+            detail=f"登录失败次数过多，请 {LOGIN_LOCKOUT_MINUTES} 分钟后再试",
+        )
+
+    if attempt and attempt.locked_until and is_expired(attempt.locked_until):
+        attempt.failed_count = 0
+        attempt.locked_until = None
+
+    if not verify_password(payload.password, user.password_hash):
+        locked = _record_failed_login(session, user.account, source_ip, attempt)
+        if locked:
+            raise HTTPException(
+                status_code=429,
+                detail=f"登录失败次数过多，请 {LOGIN_LOCKOUT_MINUTES} 分钟后再试",
+            )
+        raise HTTPException(status_code=401, detail="账号或密码错误")
+
+    if attempt:
+        attempt.failed_count = 0
+        attempt.locked_until = None
+        attempt.last_failed_at = None
+        session.add(attempt)
     return create_auth_response(session, user)
 
 
@@ -155,3 +251,23 @@ def logout(
 @router.get("/me", response_model=UserRead)
 def me(current_user: User = Depends(get_current_user)):
     return to_user_read(current_user)
+
+
+@router.get(
+    "/audit-logs",
+    response_model=SecurityAuditLogListResponse,
+)
+def audit_logs(
+    _admin: User = Depends(require_admin),
+    limit: int = Query(default=50, ge=1, le=200),
+    session: Session = Depends(get_session),
+):
+    logs = session.exec(
+        select(SecurityAuditLog)
+        .order_by(SecurityAuditLog.created_at.desc())
+        .limit(limit)
+    ).all()
+    return SecurityAuditLogListResponse(
+        total_count=len(logs),
+        logs=[SecurityAuditLogRead.model_validate(log) for log in logs],
+    )
