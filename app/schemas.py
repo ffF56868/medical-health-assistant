@@ -681,6 +681,10 @@ class KnowledgeStatusResponse(SQLModel):
     chunk_count: int
     indexed_document_count: int | None = None
     indexed_at: datetime | None = None
+    text_cleaning_version: str | None = None
+    chunking_strategy: str | None = None
+    chunk_size: int | None = None
+    chunk_overlap: int | None = None
 
 
 class HealthResponse(SQLModel):

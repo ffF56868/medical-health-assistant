@@ -762,6 +762,10 @@ async function deleteConversation(conversation) {
 
 function showKnowledgeStatus(data) {
   knowledgeStatus.className = "knowledge-status";
+  const processingSummary = data.text_cleaning_version && data.chunking_strategy
+    ? `文本清洗：${data.text_cleaning_version}；分块：${data.chunking_strategy}，${data.chunk_size} 字符，重叠 ${data.chunk_overlap} 字符`
+    : "";
+  knowledgeStatus.title = processingSummary || "知识库状态";
   if (data.is_current) {
     knowledgeStatus.textContent = `知识库已就绪：${data.document_count} 份资料，${data.chunk_count} 个切块`;
     return;

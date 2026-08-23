@@ -6,7 +6,6 @@ from pathlib import Path
 from langchain_chroma import Chroma
 from langchain_core.documents import Document
 from langchain_openai import OpenAIEmbeddings
-from langchain_text_splitters import RecursiveCharacterTextSplitter
 from sqlmodel import Session, select
 
 from app.models import Condition, Drug, KnowledgeDocument, KnowledgeIndexState
@@ -18,17 +17,16 @@ from app.cache import (
     set_cached_json,
 )
 from app.source_metadata import get_source_tier_label, needs_source_review
+from app.text_processing import (
+    split_document_for_embedding,
+    get_text_processing_config,
+)
 
 
 COLLECTION_NAME = "medical_health_knowledge"
 MIN_RELEVANCE_SCORE = 0.2
 RAG_RETRIEVAL_FETCH_COUNT = 8
 RAG_RETRIEVAL_RESULT_COUNT = 3
-TEXT_SPLITTER = RecursiveCharacterTextSplitter(
-    chunk_size=500,
-    chunk_overlap=80,
-    separators=["\n\n", "\n", "。", "！", "？", "；", "，", ""],
-)
 
 
 def select_distinct_relevant_matches(
@@ -179,14 +177,11 @@ def build_knowledge_documents(session: Session) -> list[Document]:
             )
         )
 
-    chunks: list[Document] = []
-    for document in documents:
-        split_documents = TEXT_SPLITTER.split_documents([document])
-        for chunk_index, chunk in enumerate(split_documents):
-            chunk.metadata["chunk_index"] = chunk_index
-            chunks.append(chunk)
-
-    return chunks
+    return [
+        chunk
+        for document in documents
+        for chunk in split_document_for_embedding(document)
+    ]
 
 
 def get_knowledge_fingerprint(documents: list[Document]) -> str:
@@ -202,8 +197,16 @@ def get_knowledge_fingerprint(documents: list[Document]) -> str:
 
 
 def get_knowledge_status(session: Session) -> dict:
+    processing_config = get_text_processing_config()
     cached_status = get_cached_json(KNOWLEDGE_STATUS_CACHE_KEY)
-    if isinstance(cached_status, dict) and "is_current" in cached_status:
+    if (
+        isinstance(cached_status, dict)
+        and "is_current" in cached_status
+        and all(
+            cached_status.get(key) == value
+            for key, value in processing_config.items()
+        )
+    ):
         return cached_status
 
     documents = build_knowledge_documents(session)
@@ -229,6 +232,7 @@ def get_knowledge_status(session: Session) -> dict:
             index_state.document_count if index_state is not None else None
         ),
         "indexed_at": index_state.indexed_at if index_state is not None else None,
+        **processing_config,
     }
     set_cached_json(
         KNOWLEDGE_STATUS_CACHE_KEY,
