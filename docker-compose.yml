@@ -1,6 +1,26 @@
 name: medical-health-assistant
 
 services:
+  mysql:
+    image: mysql:8.4
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_unicode_ci
+    environment:
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-medical_health}
+      MYSQL_USER: ${MYSQL_USER:-medical_user}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-medical_password}
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-medical_root_password}
+    volumes:
+      - medical_health_mysql:/var/lib/mysql
+    healthcheck:
+      test:
+        ["CMD-SHELL", "mysqladmin ping -h localhost -u root -p$${MYSQL_ROOT_PASSWORD:-medical_root_password}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    restart: unless-stopped
+
   api:
     build:
       context: .
@@ -13,7 +33,7 @@ services:
     env_file:
       - .env
     environment:
-      DATABASE_URL: sqlite:////app/data/medical_health.db
+      DATABASE_URL: ${DATABASE_URL:-mysql+pymysql://medical_user:medical_password@mysql:3306/medical_health?charset=utf8mb4}
       CHROMA_DIR: /app/data/chroma_db
       HTTP_PROXY: ${DOCKER_HTTP_PROXY:-http://host.docker.internal:23567}
       HTTPS_PROXY: ${DOCKER_HTTPS_PROXY:-http://host.docker.internal:23567}
@@ -21,6 +41,9 @@ services:
     volumes:
       - medical_health_data:/app/data
     restart: unless-stopped
+    depends_on:
+      mysql:
+        condition: service_healthy
     healthcheck:
       test:
         ["CMD", "python", "-c", "from urllib.request import urlopen; urlopen('http://127.0.0.1:8003/health')"]
@@ -33,3 +56,4 @@ volumes:
   medical_health_data:
     external: true
     name: medical-health-assistant_medical_health_data
+  medical_health_mysql:

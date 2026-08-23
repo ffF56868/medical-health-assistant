@@ -9,10 +9,21 @@ DATABASE_URL = os.getenv(
     "sqlite:///medical_health.db",
 )
 
-engine = create_engine(
-    DATABASE_URL,
-    connect_args={"check_same_thread": False},
-)
+
+def build_engine(database_url: str) -> Engine:
+    """Create a database engine with backend-specific connection options."""
+    connect_args = {}
+    if database_url.startswith("sqlite"):
+        connect_args["check_same_thread"] = False
+
+    return create_engine(
+        database_url,
+        connect_args=connect_args,
+        pool_pre_ping=True,
+    )
+
+
+engine = build_engine(DATABASE_URL)
 
 
 SQLITE_COLUMN_MIGRATIONS = {

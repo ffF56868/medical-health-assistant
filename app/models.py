@@ -1,13 +1,14 @@
 from datetime import UTC, datetime
 
+from sqlalchemy import Text
 from sqlmodel import Field, SQLModel
 
 
 class Condition(SQLModel, table=True):
     id: int | None = Field(default=None, primary_key=True)
     name: str = Field(index=True, max_length=100)
-    symptoms: str = Field(max_length=5000)
-    treatment: str = Field(max_length=5000)
+    symptoms: str = Field(sa_type=Text)
+    treatment: str = Field(sa_type=Text)
     source: str = Field(default="未标注来源", max_length=200)
     source_url: str | None = Field(default=None, max_length=2000)
     source_tier: str = Field(default="unverified", max_length=20)
@@ -19,8 +20,8 @@ class Condition(SQLModel, table=True):
 class Drug(SQLModel, table=True):
     id: int | None = Field(default=None, primary_key=True)
     name: str = Field(index=True, max_length=100)
-    effects: str = Field(max_length=5000)
-    instructions: str = Field(max_length=5000)
+    effects: str = Field(sa_type=Text)
+    instructions: str = Field(sa_type=Text)
     source: str = Field(default="未标注来源", max_length=200)
     source_url: str | None = Field(default=None, max_length=2000)
     source_tier: str = Field(default="unverified", max_length=20)
@@ -32,7 +33,7 @@ class Drug(SQLModel, table=True):
 class KnowledgeDocument(SQLModel, table=True):
     id: int | None = Field(default=None, primary_key=True)
     title: str = Field(index=True, max_length=200)
-    content: str = Field(max_length=20000)
+    content: str = Field(sa_type=Text)
     source: str = Field(default="未标注来源", max_length=200)
     source_url: str | None = Field(default=None, max_length=2000)
     source_tier: str = Field(default="unverified", max_length=20)
@@ -48,8 +49,8 @@ class ChatMessage(SQLModel, table=True):
     user_id: int | None = Field(default=None, index=True)
     conversation_id: str = Field(index=True, max_length=100)
     role: str = Field(max_length=20)
-    content: str = Field(max_length=10000)
-    response_metadata_json: str = Field(default="{}", max_length=30000)
+    content: str = Field(sa_type=Text)
+    response_metadata_json: str = Field(default="{}", sa_type=Text)
     created_at: datetime = Field(
         default_factory=lambda: datetime.now(UTC),
         index=True,
@@ -79,7 +80,7 @@ class KnowledgeSnapshot(SQLModel, table=True):
     content_hash: str = Field(index=True, max_length=64)
     document_count: int
     reason: str = Field(default="rebuild", max_length=50)
-    payload_json: str
+    payload_json: str = Field(sa_type=Text)
     created_at: datetime = Field(
         default_factory=lambda: datetime.now(UTC),
         index=True,
@@ -138,7 +139,7 @@ class RAGEvaluationRun(SQLModel, table=True):
     custom_count: int
     knowledge_document_count: int
     knowledge_hash: str | None = Field(default=None, max_length=64)
-    results_json: str = Field(default="[]")
+    results_json: str = Field(default="[]", sa_type=Text)
     created_at: datetime = Field(
         default_factory=lambda: datetime.now(UTC),
         index=True,
