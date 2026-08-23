@@ -175,6 +175,7 @@ class DocumentUploadItem(SQLModel):
     filename: str
     title: str
     document_id: int
+    created_document_count: int = 1
 
 
 class DocumentUploadError(SQLModel):
@@ -184,9 +185,26 @@ class DocumentUploadError(SQLModel):
 
 class DocumentUploadBatchResponse(SQLModel):
     created_count: int
+    created_document_count: int = 0
     failed_count: int
     items: list[DocumentUploadItem] = Field(default_factory=list)
     errors: list[DocumentUploadError] = Field(default_factory=list)
+
+
+class DocumentWebImportRequest(SQLModel):
+    url: str = Field(min_length=1, max_length=2000)
+    title: str | None = Field(default=None, max_length=200)
+
+    _normalize_url = field_validator("url", mode="before")(normalize_source_url)
+
+    @field_validator("title", mode="before")
+    @classmethod
+    def normalize_title(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        if not isinstance(value, str):
+            raise ValueError("资料标题必须是文本")
+        return value.strip() or None
 
 
 KNOWLEDGE_TYPES = {"all", "condition", "drug", "document"}

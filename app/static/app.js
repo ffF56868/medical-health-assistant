@@ -38,6 +38,7 @@ const searchResults = document.querySelector("#search-results");
 const entryStatus = document.querySelector("#entry-status");
 const uploadForm = document.querySelector("#upload-form");
 const uploadFile = document.querySelector("#upload-file");
+const webImportForm = document.querySelector("#web-import-form");
 const editDialog = document.querySelector("#edit-dialog");
 const editForm = document.querySelector("#edit-form");
 const editTitle = document.querySelector("#edit-title");
@@ -1870,13 +1871,42 @@ async function uploadKnowledgeFile(event) {
     if (!response.ok) throw new Error(getErrorMessage(data, "上传失败。"));
     uploadForm.reset();
     const failedNames = data.errors.map((item) => `${item.filename}（${item.detail}）`);
-    entryStatus.textContent = `成功导入 ${data.created_count} 个文件，失败 ${data.failed_count} 个。知识库已变为待重建状态。${failedNames.length ? ` 失败：${failedNames.join("、")}` : ""}`;
+    entryStatus.textContent = `成功导入 ${data.created_count} 个文件，新增 ${data.created_document_count} 条资料，失败 ${data.failed_count} 个。知识库已变为待重建状态。${failedNames.length ? ` 失败：${failedNames.join("、")}` : ""}`;
     await loadKnowledgeStatus();
     await loadReviewQueue();
     await loadKnowledgeVersions();
   } catch (error) {
     entryStatus.className = "manager-status error";
     entryStatus.textContent = `上传失败：${error.message}`;
+  } finally {
+    submitButton.disabled = false;
+  }
+}
+
+async function importWebKnowledge(event) {
+  event.preventDefault();
+  const submitButton = webImportForm.querySelector("button[type='submit']");
+  const payload = Object.fromEntries(new FormData(webImportForm).entries());
+  entryStatus.className = "manager-status";
+  entryStatus.textContent = "正在读取网页资料...";
+  submitButton.disabled = true;
+
+  try {
+    const response = await apiFetch("/documents/import-web", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    const data = await response.json();
+    if (!response.ok) throw new Error(getErrorMessage(data, "网页导入失败。"));
+    webImportForm.reset();
+    entryStatus.textContent = `已导入网页资料“${data.title}”。知识库已变为待重建状态。`;
+    await loadKnowledgeStatus();
+    await loadReviewQueue();
+    await loadKnowledgeVersions();
+  } catch (error) {
+    entryStatus.className = "manager-status error";
+    entryStatus.textContent = `网页导入失败：${error.message}`;
   } finally {
     submitButton.disabled = false;
   }
@@ -2117,6 +2147,7 @@ feedbackDashboardToggle.addEventListener("click", () => {
 refreshFeedbackButton.addEventListener("click", loadFeedbackDashboard);
 searchForm.addEventListener("submit", searchKnowledge);
 uploadForm.addEventListener("submit", uploadKnowledgeFile);
+webImportForm.addEventListener("submit", importWebKnowledge);
 editForm.addEventListener("submit", saveEdit);
 document.querySelector("#edit-cancel").addEventListener("click", closeEditDialog);
 document.querySelector("#edit-cancel-bottom").addEventListener("click", closeEditDialog);

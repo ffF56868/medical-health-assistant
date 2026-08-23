@@ -1,10 +1,12 @@
 from datetime import UTC, datetime, timedelta
+from io import BytesIO
 from types import SimpleNamespace
 
 from langchain_core.documents import Document
 from sqlmodel import Session, create_engine, select
 
 from app.database import create_db_and_tables
+from app.document_parsers import ParsedDocument
 from app.main import health_check
 from app.models import KnowledgeDocument, KnowledgeRebuildJob
 from app.routers import ask as ask_router
@@ -15,6 +17,11 @@ from app.seed_specialty_knowledge import (
     SPECIALTY_KNOWLEDGE_DOCUMENTS,
     seed_specialty_knowledge,
 )
+from app.routers import documents as documents_router
+from docx import Document as WordDocument
+from openpyxl import Workbook
+from pypdf import PdfWriter
+from pypdf.generic import DecodedStreamObject, DictionaryObject, NameObject
 
 
 class FakeVectorStore:
@@ -1173,7 +1180,20 @@ def test_text_document_can_be_uploaded(client):
     assert response.json()["title"] == "睡眠提示"
 
 
-def test_text_documents_can_be_uploaded_in_a_batch_with_per_file_errors(client):
+def test_supported_documents_can_be_uploaded_in_a_batch_with_per_file_errors(client):
+    word_document = WordDocument()
+    word_document.add_paragraph("Word 中的健康知识")
+    word_buffer = BytesIO()
+    word_document.save(word_buffer)
+
+    workbook = Workbook()
+    worksheet = workbook.active
+    worksheet.title = "用药表"
+    worksheet.append(["药物", "注意事项"])
+    worksheet.append(["布洛芬", "按说明书使用"])
+    excel_buffer = BytesIO()
+    workbook.save(excel_buffer)
+
     response = client.post(
         "/documents/upload-batch",
         files=[
@@ -1187,18 +1207,107 @@ def test_text_documents_can_be_uploaded_in_a_batch_with_per_file_errors(client):
             ),
             (
                 "files",
-                ("不支持.pdf", "pdf-content".encode("utf-8"), "application/pdf"),
+                (
+                    "健康知识.docx",
+                    word_buffer.getvalue(),
+                    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                ),
+            ),
+            (
+                "files",
+                (
+                    "用药资料.xlsx",
+                    excel_buffer.getvalue(),
+                    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                ),
+            ),
+            (
+                "files",
+                ("不支持.zip", b"not-supported", "application/zip"),
             ),
         ],
     )
 
     assert response.status_code == 201
     data = response.json()
-    assert data["created_count"] == 1
+    assert data["created_count"] == 3
+    assert data["created_document_count"] == 3
     assert data["failed_count"] == 1
     assert data["items"][0]["title"] == "呼吸提示"
-    assert data["errors"][0]["filename"] == "不支持.pdf"
+    assert data["errors"][0]["filename"] == "不支持.zip"
     assert "只支持上传" in data["errors"][0]["detail"]
+
+
+def test_image_only_pdf_is_rejected_with_an_ocr_hint(client):
+    writer = PdfWriter()
+    writer.add_blank_page(width=200, height=200)
+    image_only_buffer = BytesIO()
+    writer.write(image_only_buffer)
+
+    response = client.post(
+        "/documents/upload",
+        files={"file": ("扫描件.pdf", image_only_buffer.getvalue(), "application/pdf")},
+    )
+
+    assert response.status_code == 400
+    assert "OCR" in response.json()["detail"]
+
+
+def test_text_pdf_is_imported_with_its_page_number(client):
+    writer = PdfWriter()
+    page = writer.add_blank_page(width=200, height=200)
+    font = DictionaryObject(
+        {
+            NameObject("/Type"): NameObject("/Font"),
+            NameObject("/Subtype"): NameObject("/Type1"),
+            NameObject("/BaseFont"): NameObject("/Helvetica"),
+        }
+    )
+    font_reference = writer._add_object(font)
+    page[NameObject("/Resources")] = DictionaryObject(
+        {
+            NameObject("/Font"): DictionaryObject(
+                {NameObject("/F1"): font_reference}
+            )
+        }
+    )
+    text_stream = DecodedStreamObject()
+    text_stream.set_data(b"BT /F1 12 Tf 20 100 Td (Health PDF text) Tj ET")
+    page[NameObject("/Contents")] = writer._add_object(text_stream)
+    pdf_buffer = BytesIO()
+    writer.write(pdf_buffer)
+
+    response = client.post(
+        "/documents/upload",
+        files={"file": ("用药指南.pdf", pdf_buffer.getvalue(), "application/pdf")},
+    )
+
+    assert response.status_code == 201
+    assert response.json()["title"] == "用药指南（第1页）"
+    assert response.json()["page_number"] == 1
+    assert "Health PDF text" in response.json()["content"]
+
+
+def test_web_page_can_be_imported(client, monkeypatch):
+    monkeypatch.setattr(
+        documents_router,
+        "parse_web_page",
+        lambda _url, _title: ParsedDocument(
+            title="测试健康网页",
+            content="网页中的健康资料正文",
+            source="网页导入：https://example.org/health",
+            source_url="https://example.org/health",
+        ),
+    )
+
+    response = client.post(
+        "/documents/import-web",
+        json={"url": "https://example.org/health"},
+    )
+
+    assert response.status_code == 201
+    assert response.json()["title"] == "测试健康网页"
+    assert response.json()["source_url"] == "https://example.org/health"
 
 
 def test_conversation_can_be_listed_read_and_deleted(client):

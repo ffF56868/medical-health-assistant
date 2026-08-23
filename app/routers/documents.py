@@ -1,5 +1,4 @@
 from datetime import UTC, datetime
-from pathlib import Path
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
 from sqlmodel import Session, select
@@ -7,12 +6,19 @@ from sqlmodel import Session, select
 from app.access import accessible_documents_statement, can_access_document
 from app.cache import invalidate_knowledge_status_cache
 from app.database import get_session
+from app.document_parsers import (
+    MAX_BATCH_BYTES,
+    ParsedDocument,
+    parse_uploaded_file,
+    parse_web_page,
+)
 from app.models import KnowledgeDocument, User
 from app.routers.auth import get_current_user, require_admin
 from app.schemas import (
     DocumentUploadBatchResponse,
     DocumentUploadError,
     DocumentUploadItem,
+    DocumentWebImportRequest,
     KnowledgeDocumentCreate,
     KnowledgeDocumentRead,
 )
@@ -24,50 +30,43 @@ router = APIRouter(
     dependencies=[Depends(get_current_user)],
 )
 
-ALLOWED_SUFFIXES = {".md", ".txt"}
-MAX_DOCUMENT_BYTES = 200_000
 MAX_BATCH_FILES = 20
-MAX_BATCH_BYTES = 2_000_000
 
 
-def validate_upload_file(filename: str, content_type: str | None) -> None:
-    suffix = Path(filename).suffix.lower()
-    text_content_types = {"text/markdown", "text/plain"}
-    if suffix not in ALLOWED_SUFFIXES and content_type not in text_content_types:
-        raise ValueError("只支持上传 .md 或 .txt 文本文件")
-
-
-def get_document_title(filename: str) -> str:
-    title = Path(filename).stem.strip()
-    if not title:
-        raise ValueError("文件名不能为空")
-    return title
-
-
-async def read_upload_content(upload: UploadFile) -> tuple[str, str]:
+async def parse_upload(upload: UploadFile) -> tuple[str, list[ParsedDocument], int]:
     filename = (upload.filename or "").strip()
-    validate_upload_file(filename, upload.content_type)
+    if not filename:
+        raise ValueError("文件名不能为空")
     raw_content = await upload.read()
-    if len(raw_content) > MAX_DOCUMENT_BYTES:
-        raise ValueError("文件不能超过 200KB")
-
-    try:
-        content = raw_content.decode("utf-8-sig").strip()
-    except UnicodeDecodeError as error:
-        raise ValueError("文件必须使用 UTF-8 编码保存") from error
-    if not content:
-        raise ValueError("上传的文件内容不能为空")
-    return filename, content
+    return filename, parse_uploaded_file(filename, raw_content), len(raw_content)
 
 
-def build_uploaded_document(filename: str, content: str) -> KnowledgeDocument:
+def build_uploaded_document(parsed: ParsedDocument) -> KnowledgeDocument:
     return KnowledgeDocument(
-        title=get_document_title(filename),
-        content=content,
-        source=f"上传文件：{filename}",
+        title=parsed.title,
+        content=parsed.content,
+        source=parsed.source,
+        source_url=parsed.source_url,
         source_tier="unverified",
+        page_number=parsed.page_number,
         updated_at=datetime.now(UTC),
     )
+
+
+def ensure_unique_document_titles(
+    parsed_documents: list[ParsedDocument],
+    session: Session,
+    seen_titles: set[str],
+) -> None:
+    for parsed in parsed_documents:
+        if parsed.title in seen_titles:
+            raise ValueError("本次上传中存在同名资料标题")
+        duplicate = session.exec(
+            select(KnowledgeDocument).where(KnowledgeDocument.title == parsed.title)
+        ).first()
+        if duplicate is not None:
+            raise ValueError(f"资料标题“{parsed.title}”已经存在")
+    seen_titles.update(parsed.title for parsed in parsed_documents)
 
 
 @router.post("", response_model=KnowledgeDocumentRead, status_code=201)
@@ -105,24 +104,18 @@ async def upload_document(
     session: Session = Depends(get_session),
 ):
     try:
-        filename, content = await read_upload_content(file)
-        document = build_uploaded_document(filename, content)
+        _filename, parsed_documents, _size = await parse_upload(file)
+        ensure_unique_document_titles(parsed_documents, session, set())
     except ValueError as error:
         raise HTTPException(status_code=400, detail=str(error)) from error
 
-    duplicate = session.exec(
-        select(KnowledgeDocument).where(
-            KnowledgeDocument.title == document.title
-        )
-    ).first()
-    if duplicate is not None:
-        raise HTTPException(status_code=409, detail="同名知识文档已经存在")
-
-    session.add(document)
+    documents = [build_uploaded_document(parsed) for parsed in parsed_documents]
+    session.add_all(documents)
     session.commit()
     invalidate_knowledge_status_cache()
-    session.refresh(document)
-    return document
+    for document in documents:
+        session.refresh(document)
+    return documents[0]
 
 
 @router.post(
@@ -144,7 +137,7 @@ async def upload_documents(
             detail=f"一次最多上传 {MAX_BATCH_FILES} 个文件",
         )
 
-    created_documents: list[tuple[str, KnowledgeDocument]] = []
+    created_files: list[tuple[str, list[KnowledgeDocument]]] = []
     errors: list[DocumentUploadError] = []
     total_bytes = 0
     seen_titles: set[str] = set()
@@ -152,43 +145,35 @@ async def upload_documents(
     for upload in files:
         filename = (upload.filename or "未命名文件").strip() or "未命名文件"
         try:
-            filename, content = await read_upload_content(upload)
-            total_bytes += len(content.encode("utf-8"))
-            if total_bytes > MAX_BATCH_BYTES:
-                raise ValueError("批量上传文件总大小不能超过 2MB")
-
-            document = build_uploaded_document(filename, content)
-            if document.title in seen_titles:
-                raise ValueError("本次上传中存在同名文件")
-            duplicate = session.exec(
-                select(KnowledgeDocument).where(
-                    KnowledgeDocument.title == document.title
-                )
-            ).first()
-            if duplicate is not None:
-                raise ValueError("同名知识文档已经存在")
-
-            seen_titles.add(document.title)
-            session.add(document)
-            created_documents.append((filename, document))
+            filename, parsed_documents, raw_size = await parse_upload(upload)
+            if total_bytes + raw_size > MAX_BATCH_BYTES:
+                raise ValueError("批量上传文件总大小不能超过 20MB")
+            total_bytes += raw_size
+            ensure_unique_document_titles(parsed_documents, session, seen_titles)
+            documents = [build_uploaded_document(parsed) for parsed in parsed_documents]
+            session.add_all(documents)
+            created_files.append((filename, documents))
         except ValueError as error:
             errors.append(DocumentUploadError(filename=filename, detail=str(error)))
 
     session.commit()
     invalidate_knowledge_status_cache()
     items: list[DocumentUploadItem] = []
-    for filename, document in created_documents:
-        session.refresh(document)
+    for filename, documents in created_files:
+        for document in documents:
+            session.refresh(document)
         items.append(
             DocumentUploadItem(
                 filename=filename,
-                title=document.title,
-                document_id=document.id,
+                title=documents[0].title,
+                document_id=documents[0].id,
+                created_document_count=len(documents),
             )
         )
 
     return DocumentUploadBatchResponse(
         created_count=len(items),
+        created_document_count=sum(len(documents) for _, documents in created_files),
         failed_count=len(errors),
         items=items,
         errors=errors,
@@ -211,6 +196,26 @@ def list_documents(
         )
 
     return session.exec(statement).all()
+
+
+@router.post("/import-web", response_model=KnowledgeDocumentRead, status_code=201)
+def import_web_document(
+    import_data: DocumentWebImportRequest,
+    _admin: User = Depends(require_admin),
+    session: Session = Depends(get_session),
+):
+    try:
+        parsed = parse_web_page(import_data.url, import_data.title)
+        ensure_unique_document_titles([parsed], session, set())
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+
+    document = build_uploaded_document(parsed)
+    session.add(document)
+    session.commit()
+    invalidate_knowledge_status_cache()
+    session.refresh(document)
+    return document
 
 
 @router.get("/{document_id}", response_model=KnowledgeDocumentRead)

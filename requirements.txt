@@ -8,5 +8,9 @@ langchain-openai
 langchain-text-splitters
 python-dotenv
 python-multipart
+pypdf
+python-docx
+openpyxl
+beautifulsoup4
 pytest
 httpx
