@@ -504,7 +504,8 @@ h2 { font-size: 20px; margin: 0; }
 
 .reference-score { color: #3b7475; font-size: 12px; }
 
-.reference-source, .reference-excerpt { color: #526166; font-size: 13px; margin: 4px 0 0; }
+.reference-source, .reference-location, .reference-excerpt { color: #526166; font-size: 13px; margin: 4px 0 0; }
+.reference-location { color: #21676a; font-weight: 600; }
 
 .reference-confidence { color: #3b7475; font-size: 12px; margin: 4px 0 0; }
 

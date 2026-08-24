@@ -429,13 +429,16 @@ function appendReferences(message, references) {
     source.textContent = `来源：${reference.source || "未标注来源"}`;
     const sourceUrlLink = createSourceUrlLink(reference.source_url);
     if (sourceUrlLink) source.after(sourceUrlLink);
+    item.querySelector(".reference-location").textContent =
+      `引用位置：${reference.location || (reference.page_number ? `第 ${reference.page_number} 页` : "全文")}`;
     const confidence = item.querySelector(".reference-confidence");
     confidence.textContent = `可信度：${getSourceTierLabel(reference.source_tier)} | 最后更新：${formatUpdatedAt(reference.updated_at)}`;
     if (reference.needs_review) {
       confidence.classList.add("needs-review");
       confidence.textContent += " | 资料需核验，不能作为医疗结论";
     }
-    item.querySelector(".reference-excerpt").textContent = reference.excerpt;
+    item.querySelector(".reference-excerpt").textContent =
+      `引用片段：${reference.excerpt}`;
     const viewButton = item.querySelector(".reference-open");
     if (Number.isInteger(reference.record_id)) {
       viewButton.addEventListener("click", async () => {
@@ -505,6 +508,13 @@ async function openReferenceDialog(reference) {
   appendReferenceDetail("资料类型", getKnowledgeTypeLabel(reference.type));
   appendReferenceDetail("资料来源", data.source);
   appendReferenceLinkDetail("来源链接", data.source_url);
+  appendReferenceDetail("来源类型", reference.source_kind || "知识文档");
+  appendReferenceDetail(
+    "引用位置",
+    reference.location || (reference.page_number ? `第 ${reference.page_number} 页` : "全文"),
+  );
+  appendReferenceDetail("引用标识", reference.citation);
+  appendReferenceDetail("引用片段", reference.excerpt);
   appendReferenceDetail("可信度等级", getSourceTierLabel(data.source_tier));
   appendReferenceDetail("最后更新", formatUpdatedAt(data.updated_at));
   if (knowledgeStatusData?.is_current) {

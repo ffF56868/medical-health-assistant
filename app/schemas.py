@@ -258,7 +258,12 @@ class ReferenceRead(SQLModel):
     record_id: int | None = None
     source: str | None = None
     source_url: str | None = None
+    source_kind: str = "知识文档"
+    location: str = "全文"
+    citation: str = ""
     page_number: int | None = None
+    chunk_index: int | None = None
+    chunk_count: int | None = None
     source_tier: str = "unverified"
     updated_at: datetime | None = None
     needs_review: bool = True

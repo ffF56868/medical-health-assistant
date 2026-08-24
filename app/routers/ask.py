@@ -212,16 +212,80 @@ def parse_metadata_datetime(value: object) -> datetime | None:
         return None
 
 
+def parse_metadata_int(value: object, minimum: int = 0) -> int | None:
+    try:
+        parsed_value = int(value)
+    except (TypeError, ValueError):
+        return None
+    return parsed_value if parsed_value >= minimum else None
+
+
+def infer_source_kind(
+    knowledge_type: str,
+    source: str,
+    source_url: str,
+) -> str:
+    """Return a human-readable source category for a stable citation."""
+    if knowledge_type in {"condition", "drug"}:
+        return "结构化资料"
+    if "PDF" in source.upper():
+        return "PDF 文件"
+    if "WORD" in source.upper():
+        return "Word 文件"
+    if "EXCEL" in source.upper():
+        return "Excel 文件"
+    if "网页" in source or source_url:
+        return "网页"
+    if "上传文件" in source:
+        return "文本文件"
+    return "知识文档"
+
+
+def build_citation_location(
+    source_kind: str,
+    page_number: int | None,
+    chunk_index: int | None,
+    chunk_count: int | None,
+) -> str:
+    location_parts: list[str] = []
+    if page_number is not None:
+        location_parts.append(f"第 {page_number} 页")
+    elif source_kind == "网页":
+        location_parts.append("网页正文")
+    elif source_kind == "结构化资料":
+        location_parts.append("结构化记录")
+    else:
+        location_parts.append("全文")
+
+    if (
+        chunk_index is not None
+        and chunk_count is not None
+        and chunk_count > 1
+    ):
+        location_parts.append(f"切块 {chunk_index + 1}/{chunk_count}")
+    return " · ".join(location_parts)
+
+
 def build_references(relevant_matches: list[tuple[object, float]]) -> list[dict]:
     references: list[dict] = []
     for document, score in relevant_matches:
         metadata = document.metadata
+        knowledge_type = str(metadata.get("type", "unknown"))
+        name = str(metadata.get("name", "未命名资料"))
         source_tier = str(metadata.get("source_tier", "unverified"))
         source = str(metadata.get("source", "未标注来源"))
         source_url = str(metadata.get("source_url", "") or "")
-        page_number = metadata.get("page_number")
-        if not isinstance(page_number, int) or page_number < 1:
-            page_number = None
+        page_number = parse_metadata_int(metadata.get("page_number"), 1)
+        chunk_index = parse_metadata_int(metadata.get("chunk_index"), 0)
+        chunk_count = parse_metadata_int(metadata.get("chunk_count"), 1)
+        source_kind = infer_source_kind(knowledge_type, source, source_url)
+        location = build_citation_location(
+            source_kind,
+            page_number,
+            chunk_index,
+            chunk_count,
+        )
+        citation = f"{name} | {source_kind} | {source} | {location}"
         updated_at = parse_metadata_datetime(metadata.get("updated_at"))
         initial_score = metadata.get("initial_score")
         try:
@@ -230,12 +294,17 @@ def build_references(relevant_matches: list[tuple[object, float]]) -> list[dict]
             initial_score_value = score
         references.append(
             {
-                "name": metadata.get("name", "未命名资料"),
-                "type": metadata.get("type", "unknown"),
+                "name": name,
+                "type": knowledge_type,
                 "record_id": metadata.get("record_id"),
                 "source": source,
                 "source_url": source_url or None,
+                "source_kind": source_kind,
+                "location": location,
+                "citation": citation,
                 "page_number": page_number,
+                "chunk_index": chunk_index,
+                "chunk_count": chunk_count,
                 "source_tier": source_tier,
                 "updated_at": updated_at,
                 "needs_review": bool(
