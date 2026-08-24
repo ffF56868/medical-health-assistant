@@ -1469,7 +1469,7 @@ def test_rag_keeps_the_best_chunk_and_returns_structured_references(
     assert response.status_code == 200
     data = response.json()
     assert data["answer"] == "这是测试模型回答。"
-    assert data["source"] == "chroma-retrieval-openai-generation"
+    assert data["source"] == "vector-rerank-retrieval-openai-generation"
     assert vector_store.last_k == 8
     assert vector_store.last_filter is None
     assert chat_model.call_count == 1
@@ -1485,7 +1485,7 @@ def test_rag_keeps_the_best_chunk_and_returns_structured_references(
     assert data["references"][0]["source_url"] == "https://example.org/sleep"
     assert data["references"][0]["source_tier"] == "unverified"
     assert data["references"][0]["needs_review"] is True
-    assert data["processing_path"] == "rag-vector-retrieval"
+    assert data["processing_path"] == "rag-vector-rerank"
     assert data["retrieval_scope"] == "all"
     assert data["source_filter"] == "all"
     assert data["retrieved_count"] == 2
@@ -1494,7 +1494,7 @@ def test_rag_keeps_the_best_chunk_and_returns_structured_references(
     messages_response = client.get("/conversations/test-rag-references/messages")
     assert messages_response.status_code == 200
     assistant_metadata = messages_response.json()[1]["response_metadata"]
-    assert assistant_metadata["processing_path"] == "rag-vector-retrieval"
+    assert assistant_metadata["processing_path"] == "rag-vector-rerank"
     assert assistant_metadata["retrieval_scope"] == "all"
     assert assistant_metadata["source_filter"] == "all"
     assert assistant_metadata["references"][0]["record_id"] == 1
@@ -1730,7 +1730,7 @@ def test_rag_streams_tokens_and_saves_the_completed_answer(client, monkeypatch):
     assert response.text.count("event: token") == 2
     assert '"text": "这是分段返回"' in response.text
     assert '"text": "的测试回答。"' in response.text
-    assert '"processing_path": "rag-vector-retrieval"' in response.text
+    assert '"processing_path": "rag-vector-rerank"' in response.text
     assert '"retrieval_scope": "drug"' in response.text
     assert '"source_filter": "reviewed"' in response.text
     assert '"retrieved_count": 1' in response.text
@@ -1746,7 +1746,7 @@ def test_rag_streams_tokens_and_saves_the_completed_answer(client, monkeypatch):
         "这是分段返回的测试回答。",
     ]
     assistant_metadata = messages.json()[1]["response_metadata"]
-    assert assistant_metadata["processing_path"] == "rag-vector-retrieval"
+    assert assistant_metadata["processing_path"] == "rag-vector-rerank"
     assert assistant_metadata["retrieval_scope"] == "drug"
     assert assistant_metadata["source_filter"] == "reviewed"
     assert assistant_metadata["references"][0]["name"] == "布洛芬"

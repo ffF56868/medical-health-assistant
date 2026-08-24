@@ -13,6 +13,11 @@ from app.database import get_session
 from app.models import ChatMessage, User
 from app.routers.auth import get_current_user
 from app.schemas import AskRequest, AskResponse
+from app.hybrid_search import (
+    build_vector_filter,
+    get_retrieval_method,
+    hybrid_search,
+)
 from app.source_metadata import needs_source_review
 from app.vector_store import (
     RAG_RETRIEVAL_FETCH_COUNT,
@@ -107,43 +112,27 @@ def get_stream_text(chunk: object) -> str:
     return str(content)
 
 
-def build_vector_filter(
-    knowledge_type: str,
-    source_filter: str,
-    current_user: User | None = None,
-) -> dict | None:
-    conditions: list[dict] = []
-    if knowledge_type != "all":
-        conditions.append({"type": knowledge_type})
-    if source_filter == "reviewed":
-        conditions.append({"needs_review": False})
-    if current_user is not None and not current_user.is_admin:
-        access_filter = {
-            "$or": [
-                {"visibility": "public"},
-                {
-                    "$and": [
-                        {"visibility": "private"},
-                        {"owner_user_id": current_user.id},
-                    ]
-                },
-            ]
-        }
-        conditions.append(access_filter)
-    if not conditions:
-        return None
-    if len(conditions) == 1:
-        return conditions[0]
-    return {"$and": conditions}
-
-
 def search_knowledge(
     vector_store: object,
     query: str,
     knowledge_type: str,
     source_filter: str,
     current_user: User | None = None,
+    session: Session | None = None,
+    keyword_query: str | None = None,
 ):
+    if session is not None:
+        return hybrid_search(
+            session,
+            vector_store,
+            query,
+            knowledge_type,
+            source_filter,
+            current_user,
+            RAG_RETRIEVAL_FETCH_COUNT,
+            keyword_query=keyword_query,
+        )
+
     search_options = {"k": RAG_RETRIEVAL_FETCH_COUNT}
     vector_filter = build_vector_filter(
         knowledge_type,
@@ -153,6 +142,43 @@ def search_knowledge(
     if vector_filter is not None:
         search_options["filter"] = vector_filter
     return vector_store.similarity_search_with_relevance_scores(query, **search_options)
+
+
+def retrieval_labels(matches: list[tuple[object, float]]) -> tuple[str, str]:
+    method = get_retrieval_method(matches)
+    rerank_applied = any(
+        bool(getattr(document, "metadata", {}).get("rerank_applied"))
+        for document, _ in matches
+    )
+    if rerank_applied and method == "hybrid":
+        return (
+            "hybrid-rerank-retrieval-openai-generation",
+            "rag-hybrid-rerank",
+        )
+    if rerank_applied and method == "keyword":
+        return (
+            "keyword-rerank-retrieval-openai-generation",
+            "rag-keyword-rerank",
+        )
+    if rerank_applied:
+        return (
+            "vector-rerank-retrieval-openai-generation",
+            "rag-vector-rerank",
+        )
+    if method == "hybrid":
+        return (
+            "hybrid-retrieval-openai-generation",
+            "rag-hybrid-retrieval",
+        )
+    if method == "keyword":
+        return (
+            "mysql-keyword-retrieval-openai-generation",
+            "rag-keyword-retrieval",
+        )
+    return (
+        "chroma-retrieval-openai-generation",
+        "rag-vector-retrieval",
+    )
 
 
 def select_title_matched_documents(
@@ -197,6 +223,11 @@ def build_references(relevant_matches: list[tuple[object, float]]) -> list[dict]
         if not isinstance(page_number, int) or page_number < 1:
             page_number = None
         updated_at = parse_metadata_datetime(metadata.get("updated_at"))
+        initial_score = metadata.get("initial_score")
+        try:
+            initial_score_value = float(initial_score)
+        except (TypeError, ValueError):
+            initial_score_value = score
         references.append(
             {
                 "name": metadata.get("name", "未命名资料"),
@@ -219,7 +250,16 @@ def build_references(relevant_matches: list[tuple[object, float]]) -> list[dict]
                     )
                 ),
                 "excerpt": document.page_content.replace("\n", " ")[:180],
-                "relevance_score": round(score, 3),
+                # Keep the original field stable; rerank_score is the new
+                # second-stage score used for the final ordering.
+                "relevance_score": round(initial_score_value, 3),
+                "initial_score": metadata.get("initial_score"),
+                "rerank_score": metadata.get("rerank_score", round(score, 3)),
+                "rerank_text_score": metadata.get("rerank_text_score"),
+                "rerank_title_score": metadata.get("rerank_title_score"),
+                "retrieval_method": metadata.get("retrieval_method", "vector"),
+                "vector_score": metadata.get("vector_score"),
+                "keyword_score": metadata.get("keyword_score"),
             }
         )
     return references
@@ -281,7 +321,7 @@ def ask_question(
     current_user: User = Depends(get_current_user),
     session: Session = Depends(get_session),
 ):
-    """根据语义相似度，从 Chroma 向量库检索医疗健康资料。"""
+    """同时使用 MySQL 关键词检索和 Chroma 向量检索获取资料。"""
     started_at = perf_counter()
     history = session.exec(
         select(ChatMessage)
@@ -363,6 +403,8 @@ def ask_question(
             request.knowledge_type,
             request.source_filter,
             current_user,
+            session,
+            request.question,
         )
     except Exception as error:
         raise HTTPException(
@@ -467,10 +509,11 @@ def ask_question(
             detail="模型暂时不可用，请检查 CHAT_MODEL 和 API 配置",
         ) from error
 
+    retrieval_source, retrieval_path = retrieval_labels(relevant_matches)
     metadata = build_response_metadata(
-        source="chroma-retrieval-openai-generation",
+        source=retrieval_source,
         references=references,
-        processing_path="rag-vector-retrieval",
+        processing_path=retrieval_path,
         retrieval_scope=request.knowledge_type,
         source_filter=request.source_filter,
         retrieved_count=len(relevant_documents),
@@ -599,6 +642,8 @@ def stream_answer(
             request.knowledge_type,
             request.source_filter,
             current_user,
+            session,
+            request.question,
         )
     except Exception as error:
         raise HTTPException(
@@ -661,6 +706,7 @@ def stream_answer(
 
     context = "\n\n".join(document.page_content for document in relevant_documents)
     references = build_references(relevant_matches)
+    retrieval_source, retrieval_path = retrieval_labels(relevant_matches)
     prompt = ChatPromptTemplate.from_messages(
         [
             (
@@ -695,9 +741,9 @@ def stream_answer(
 
     def answer_event_stream():
         initial_metadata = build_response_metadata(
-            source="chroma-retrieval-openai-generation",
+            source=retrieval_source,
             references=references,
-            processing_path="rag-vector-retrieval",
+            processing_path=retrieval_path,
             retrieval_scope=request.knowledge_type,
             source_filter=request.source_filter,
             retrieved_count=len(relevant_documents),
@@ -727,9 +773,9 @@ def stream_answer(
             yield format_sse_event("error", {"detail": "模型没有返回可用内容"})
             return
         metadata = build_response_metadata(
-            source="chroma-retrieval-openai-generation",
+            source=retrieval_source,
             references=references,
-            processing_path="rag-vector-retrieval",
+            processing_path=retrieval_path,
             retrieval_scope=request.knowledge_type,
             source_filter=request.source_filter,
             retrieved_count=len(relevant_documents),

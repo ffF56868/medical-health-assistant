@@ -264,6 +264,13 @@ class ReferenceRead(SQLModel):
     needs_review: bool = True
     excerpt: str
     relevance_score: float
+    initial_score: float | None = None
+    rerank_score: float | None = None
+    rerank_text_score: float | None = None
+    rerank_title_score: float | None = None
+    retrieval_method: str = "vector"
+    vector_score: float | None = None
+    keyword_score: float | None = None
 
 
 class AskResponse(SQLModel):

@@ -417,7 +417,14 @@ function appendReferences(message, references) {
   for (const reference of references) {
     const item = referenceTemplate.content.cloneNode(true);
     item.querySelector(".reference-name").textContent = reference.name;
-    item.querySelector(".reference-score").textContent = `相关度 ${Math.round(reference.relevance_score * 100)}%`;
+    const methodLabels = {
+      hybrid: "关键词 + 向量",
+      keyword: "关键词",
+      vector: "向量",
+    };
+    const rerankScore = reference.rerank_score ?? reference.relevance_score;
+    item.querySelector(".reference-score").textContent =
+      `重排相关度 ${Math.round(rerankScore * 100)}% | ${methodLabels[reference.retrieval_method] || "检索"}`;
     const source = item.querySelector(".reference-source");
     source.textContent = `来源：${reference.source || "未标注来源"}`;
     const sourceUrlLink = createSourceUrlLink(reference.source_url);
@@ -563,6 +570,11 @@ function appendFeedback(message, role, assistantMessageId) {
 function appendTrace(message, trace) {
   const pathLabels = {
     "rag-vector-retrieval": "RAG 检索 + 模型生成",
+    "rag-hybrid-retrieval": "混合检索（关键词 + 向量）+ 模型生成",
+    "rag-keyword-retrieval": "关键词检索 + 模型生成",
+    "rag-vector-rerank": "向量检索 + rerank 重排序 + 模型生成",
+    "rag-hybrid-rerank": "混合检索 + rerank 重排序 + 模型生成",
+    "rag-keyword-rerank": "关键词检索 + rerank 重排序 + 模型生成",
     "vector-search-no-match": "未找到相关资料",
     "safety-keyword-guard": "安全拦截",
   };
