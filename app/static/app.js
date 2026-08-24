@@ -70,12 +70,16 @@ const rebuildHistoryStatus = document.querySelector("#rebuild-history-status");
 const rebuildHistoryResults = document.querySelector("#rebuild-history-results");
 const refreshRebuildHistoryButton = document.querySelector("#refresh-rebuild-history");
 const runRagEvaluationButton = document.querySelector("#run-rag-evaluation");
+const runQualityEvaluationButton = document.querySelector("#run-quality-evaluation");
 const compareRetrievalButton = document.querySelector("#compare-retrieval");
 const diagnoseRetrievalButton = document.querySelector("#diagnose-retrieval");
 const evaluationStatus = document.querySelector("#evaluation-status");
 const evaluationMetrics = document.querySelector("#evaluation-metrics");
 const evaluationResults = document.querySelector("#evaluation-results");
 const evaluationQualityGate = document.querySelector("#evaluation-quality-gate");
+const qualityEvaluationStatus = document.querySelector("#quality-evaluation-status");
+const qualityEvaluationMetrics = document.querySelector("#quality-evaluation-metrics");
+const qualityEvaluationResults = document.querySelector("#quality-evaluation-results");
 const refreshEvaluationHistoryButton = document.querySelector("#refresh-evaluation-history");
 const evaluationHistoryStatus = document.querySelector("#evaluation-history-status");
 const evaluationHistoryList = document.querySelector("#evaluation-history-list");
@@ -83,6 +87,9 @@ const customEvaluationForm = document.querySelector("#custom-evaluation-form");
 const customEvaluationQuestion = document.querySelector("#evaluation-question");
 const customEvaluationExpectedName = document.querySelector("#evaluation-expected-name");
 const customEvaluationAlternativeNames = document.querySelector("#evaluation-alternative-names");
+const customEvaluationAnswerKeywords = document.querySelector("#evaluation-answer-keywords");
+const customEvaluationCitationNames = document.querySelector("#evaluation-citation-names");
+const customEvaluationExpectedRefusal = document.querySelector("#evaluation-expected-refusal");
 const customEvaluationCategory = document.querySelector("#evaluation-category");
 const customEvaluationExpectedType = document.querySelector("#evaluation-expected-type");
 const customEvaluationStatus = document.querySelector("#custom-evaluation-status");
@@ -1092,6 +1099,52 @@ function renderRagEvaluation(data) {
   renderEvaluationQualityGate(data.quality_gate);
 }
 
+function renderQualityEvaluation(data) {
+  const metrics = data.metrics;
+  qualityEvaluationMetrics.innerHTML = "";
+  const metricItems = [
+    ["答案正确率", `${Math.round(metrics.answer_accuracy * 100)}% (${metrics.answer_correct_count}/${metrics.total_count})`],
+    ["引用正确率", `${Math.round(metrics.citation_accuracy * 100)}% (${metrics.citation_correct_count}/${metrics.total_count})`],
+    ["拒答准确率", `${Math.round(metrics.refusal_accuracy * 100)}% (${metrics.refusal_correct_count}/${metrics.total_count})`],
+    ["实际拒答率", `${Math.round(metrics.refusal_rate * 100)}% (${metrics.refusal_observed_count}/${metrics.total_count})`],
+  ];
+  for (const [label, value] of metricItems) {
+    const metric = document.createElement("div");
+    metric.className = "evaluation-metric";
+    metric.textContent = `${label}：${value}`;
+    qualityEvaluationMetrics.append(metric);
+  }
+
+  qualityEvaluationResults.innerHTML = "";
+  for (const result of data.results) {
+    const passed = result.answer_correct && result.citation_correct && result.refusal_correct;
+    const item = document.createElement("article");
+    item.className = `quality-evaluation-result ${passed ? "passed" : "failed"}`;
+    const title = document.createElement("h5");
+    title.textContent = result.question;
+    const detail = document.createElement("p");
+    const answerText = result.expected_refusal
+      ? `拒答：${result.refusal_observed ? "已拒答" : "未拒答"}`
+      : `答案关键词：${result.answer_match_count}/${result.answer_keyword_count}`;
+    const citationText = result.expected_refusal
+      ? "拒答题不要求引用"
+      : `引用：${result.cited_names.length ? result.cited_names.join("、") : "无"}`;
+    detail.textContent = `${answerText}；${citationText}；${result.diagnostic}`;
+    item.append(title, detail);
+    if (result.missing_answer_keywords.length) {
+      const missing = document.createElement("p");
+      missing.textContent = `缺少答案关键词：${result.missing_answer_keywords.join("、")}`;
+      item.append(missing);
+    }
+    if (result.missing_citation_names.length) {
+      const missing = document.createElement("p");
+      missing.textContent = `缺少引用资料：${result.missing_citation_names.join("、")}`;
+      item.append(missing);
+    }
+    qualityEvaluationResults.append(item);
+  }
+}
+
 function renderEvaluationQualityGate(gate) {
   evaluationQualityGate.innerHTML = "";
   if (!gate) return;
@@ -1233,7 +1286,10 @@ function renderCustomEvaluationCases(data) {
     const alternatives = item.alternative_names.length
       ? `｜可接受：${item.alternative_names.join("、")}`
       : "";
-    text.textContent = `问题：${item.question}｜分类：${item.category}｜目标${getKnowledgeTypeLabel(item.expected_type)}：${item.expected_name}${alternatives}`;
+    const qualityHints = item.expected_refusal
+      ? "｜质量评测：应拒答"
+      : `｜答案关键词：${item.answer_keywords.length || "默认资料名称"}｜引用：${item.citation_names.length || "默认资料名称"}`;
+    text.textContent = `问题：${item.question}｜分类：${item.category}｜目标${getKnowledgeTypeLabel(item.expected_type)}：${item.expected_name}${alternatives}${qualityHints}`;
     const removeButton = document.createElement("button");
     removeButton.className = "text-button danger-button";
     removeButton.type = "button";
@@ -1311,6 +1367,19 @@ async function addCustomEvaluationCase(event) {
         .map((name) => name.trim())
         .filter(Boolean),
     )],
+    answer_keywords: [...new Set(
+      customEvaluationAnswerKeywords.value
+        .split(/[，,、]/)
+        .map((keyword) => keyword.trim())
+        .filter(Boolean),
+    )],
+    citation_names: [...new Set(
+      customEvaluationCitationNames.value
+        .split(/[，,、]/)
+        .map((name) => name.trim())
+        .filter(Boolean),
+    )],
+    expected_refusal: customEvaluationExpectedRefusal.checked,
     expected_type: customEvaluationExpectedType.value,
   };
   customEvaluationStatus.textContent = "正在保存自定义题...";
@@ -1370,6 +1439,34 @@ async function runRagEvaluation() {
   } finally {
     runRagEvaluationButton.disabled = false;
     runRagEvaluationButton.textContent = "运行全部评测";
+  }
+}
+
+async function runQualityEvaluation() {
+  const confirmed = window.confirm(
+    "将检查答案关键词、引用资料位置和拒答行为，只调用 Embedding，不生成模型回答。确定继续吗？",
+  );
+  if (!confirmed) return;
+
+  runQualityEvaluationButton.disabled = true;
+  runQualityEvaluationButton.textContent = "正在评估...";
+  qualityEvaluationStatus.className = "quality-evaluation-status";
+  qualityEvaluationStatus.textContent = "正在核对答案证据、引用和拒答题...";
+  qualityEvaluationMetrics.innerHTML = "";
+  qualityEvaluationResults.innerHTML = "";
+  try {
+    const response = await apiFetch("/evaluation/quality", { method: "POST" });
+    const data = await response.json();
+    if (!response.ok) throw new Error(getErrorMessage(data, "回答质量评估失败。"));
+    renderQualityEvaluation(data);
+    const { metrics } = data;
+    qualityEvaluationStatus.textContent = `评估完成：共 ${metrics.total_count} 道题，其中 ${metrics.refusal_expected_count} 道是拒答题。`;
+  } catch (error) {
+    qualityEvaluationStatus.className = "quality-evaluation-status error";
+    qualityEvaluationStatus.textContent = `评估失败：${error.message}`;
+  } finally {
+    runQualityEvaluationButton.disabled = false;
+    runQualityEvaluationButton.textContent = "评估回答质量";
   }
 }
 
@@ -2158,6 +2255,7 @@ refreshReviewHistoryButton.addEventListener("click", loadReviewHistory);
 refreshKnowledgeVersionsButton.addEventListener("click", loadKnowledgeVersions);
 refreshRebuildHistoryButton.addEventListener("click", loadRebuildJobHistory);
 runRagEvaluationButton.addEventListener("click", runRagEvaluation);
+runQualityEvaluationButton.addEventListener("click", runQualityEvaluation);
 compareRetrievalButton.addEventListener("click", compareRetrievalStrategies);
 diagnoseRetrievalButton.addEventListener("click", diagnoseCurrentRetrieval);
 refreshEvaluationHistoryButton.addEventListener("click", loadEvaluationHistory);

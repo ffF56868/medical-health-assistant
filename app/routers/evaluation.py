@@ -16,6 +16,8 @@ from app.schemas import (
     RAGEvaluationHistoryResponse,
     RAGEvaluationQualityGate,
     RAGEvaluationResponse,
+    RAGQualityCaseResult,
+    RAGQualityResponse,
     RetrievalDiagnosticCandidate,
     RetrievalDiagnosticCaseResult,
     RetrievalDiagnosticResponse,
@@ -142,6 +144,71 @@ EVALUATION_CASES = (
     },
 )
 
+# Quality-only cases are kept separate from retrieval cases because a refusal
+# question has no expected knowledge record to rank.
+QUALITY_ONLY_CASES = (
+    {
+        "case_id": "refusal-unknown-topic",
+        "case_source": "默认拒答题",
+        "question": "知识库没有收录的深海月球花应该使用什么药物？",
+        "category": "拒答能力",
+        "answer_keywords": [],
+        "citation_names": [],
+        "expected_refusal": True,
+    },
+)
+
+QUALITY_CASE_CONFIG = {
+    "drug-ibuprofen": {
+        "answer_keywords": ["布洛芬", "发热", "疼痛"],
+        "citation_names": ["布洛芬"],
+    },
+    "sleep-guidance": {
+        "answer_keywords": ["规律的睡眠", "睡眠节律"],
+        "citation_names": ["睡眠健康提示"],
+    },
+    "common-cold-symptoms": {
+        "answer_keywords": ["普通感冒", "鼻塞", "流鼻涕"],
+        "citation_names": ["普通感冒"],
+    },
+    "urgent-warning-signs": {
+        "answer_keywords": ["呼吸困难", "持续胸痛", "及时就医"],
+        "citation_names": ["需要及时就医的警示信号"],
+    },
+    "drug-acetaminophen": {
+        "answer_keywords": ["对乙酰氨基酚", "发热", "疼痛"],
+        "citation_names": ["对乙酰氨基酚"],
+    },
+    "drug-loratadine": {
+        "answer_keywords": ["氯雷他定", "鼻痒", "流清鼻涕"],
+        "citation_names": ["氯雷他定"],
+    },
+    "drug-amoxicillin-safety": {
+        "answer_keywords": ["阿莫西林", "普通感冒"],
+        "citation_names": ["阿莫西林"],
+    },
+    "drug-oseltamivir": {
+        "answer_keywords": ["奥司他韦", "流行性感冒"],
+        "citation_names": ["奥司他韦"],
+    },
+    "drug-diosmectite": {
+        "answer_keywords": ["蒙脱石散", "急性腹泻"],
+        "citation_names": ["蒙脱石散"],
+    },
+    "influenza-symptoms": {
+        "answer_keywords": ["流行性感冒", "发热", "肌肉酸痛"],
+        "citation_names": ["流行性感冒"],
+    },
+    "reflux-symptoms": {
+        "answer_keywords": ["胃食管反流", "反酸", "烧心"],
+        "citation_names": ["胃食管反流"],
+    },
+    "migraine-symptoms": {
+        "answer_keywords": ["偏头痛", "搏动性头痛", "畏光"],
+        "citation_names": ["偏头痛"],
+    },
+}
+
 
 def get_alternative_names(case: dict) -> list[str]:
     raw_names = case.get("alternative_names", [])
@@ -159,6 +226,22 @@ def normalize_evaluation_case(case: dict) -> dict:
     normalized_case = dict(case)
     normalized_case["category"] = get_case_category(case)
     normalized_case["alternative_names"] = get_alternative_names(case)
+    configured_quality = QUALITY_CASE_CONFIG.get(case.get("case_id"), {})
+    answer_keywords = case.get(
+        "answer_keywords",
+        configured_quality.get("answer_keywords", []),
+    )
+    citation_names = case.get(
+        "citation_names",
+        configured_quality.get("citation_names", []),
+    )
+    normalized_case["answer_keywords"] = (
+        answer_keywords if isinstance(answer_keywords, list) else []
+    )
+    normalized_case["citation_names"] = (
+        citation_names if isinstance(citation_names, list) else []
+    )
+    normalized_case["expected_refusal"] = bool(case.get("expected_refusal", False))
     return normalized_case
 
 
@@ -216,16 +299,20 @@ def evaluate_current_case(
     vector_store: object,
     case: dict,
 ) -> RetrievalStrategyResult:
+    return build_strategy_result(get_current_matches(vector_store, case), case)
+
+
+def get_current_matches(
+    vector_store: object,
+    case: dict,
+) -> list[tuple[object, float]]:
     matches = vector_store.similarity_search_with_relevance_scores(
         case["question"],
         k=RAG_RETRIEVAL_FETCH_COUNT,
     )
-    return build_strategy_result(
-        select_distinct_relevant_matches(
-            matches,
-            limit=RAG_RETRIEVAL_RESULT_COUNT,
-        ),
-        case,
+    return select_distinct_relevant_matches(
+        matches,
+        limit=RAG_RETRIEVAL_RESULT_COUNT,
     )
 
 
@@ -360,6 +447,14 @@ def get_record_alternative_names(record: RAGEvaluationCase) -> list[str]:
     except json.JSONDecodeError:
         return []
     return parsed_names if isinstance(parsed_names, list) else []
+
+
+def get_record_terms(record: RAGEvaluationCase, field_name: str) -> list[str]:
+    try:
+        parsed_terms = json.loads(getattr(record, field_name))
+    except (json.JSONDecodeError, TypeError):
+        return []
+    return parsed_terms if isinstance(parsed_terms, list) else []
 
 
 def get_run_result_snapshot(run: RAGEvaluationRun) -> list[dict]:
@@ -531,6 +626,9 @@ def serialize_evaluation_case(record: RAGEvaluationCase) -> RAGEvaluationCaseRea
         expected_type=record.expected_type,
         category=record.category,
         alternative_names=get_record_alternative_names(record),
+        answer_keywords=get_record_terms(record, "answer_keywords_json"),
+        citation_names=get_record_terms(record, "citation_names_json"),
+        expected_refusal=record.expected_refusal,
         created_at=record.created_at,
     )
 
@@ -544,6 +642,9 @@ def build_custom_case(record: RAGEvaluationCase) -> dict:
         "expected_type": record.expected_type,
         "category": record.category,
         "alternative_names": get_record_alternative_names(record),
+        "answer_keywords": get_record_terms(record, "answer_keywords_json"),
+        "citation_names": get_record_terms(record, "citation_names_json"),
+        "expected_refusal": record.expected_refusal,
     }
 
 
@@ -553,6 +654,22 @@ def get_evaluation_cases(session: Session) -> tuple[list[dict], int]:
     ).all()
     cases = [
         *(normalize_evaluation_case(case) for case in EVALUATION_CASES),
+        *(
+            normalize_evaluation_case(build_custom_case(case))
+            for case in custom_cases
+            if not case.expected_refusal
+        ),
+    ]
+    return cases, sum(not case.expected_refusal for case in custom_cases)
+
+
+def get_quality_evaluation_cases(session: Session) -> tuple[list[dict], int]:
+    custom_cases = session.exec(
+        select(RAGEvaluationCase).order_by(RAGEvaluationCase.created_at)
+    ).all()
+    cases = [
+        *(normalize_evaluation_case(case) for case in EVALUATION_CASES),
+        *(normalize_evaluation_case(case) for case in QUALITY_ONLY_CASES),
         *(normalize_evaluation_case(build_custom_case(case)) for case in custom_cases),
     ]
     return cases, len(custom_cases)
@@ -580,9 +697,13 @@ def create_evaluation_case(
 ):
     payload_data = payload.model_dump()
     alternative_names = payload_data.pop("alternative_names")
+    answer_keywords = payload_data.pop("answer_keywords")
+    citation_names = payload_data.pop("citation_names")
     case = RAGEvaluationCase(
         **payload_data,
         alternative_names_json=json.dumps(alternative_names, ensure_ascii=False),
+        answer_keywords_json=json.dumps(answer_keywords, ensure_ascii=False),
+        citation_names_json=json.dumps(citation_names, ensure_ascii=False),
     )
     session.add(case)
     session.commit()
@@ -664,6 +785,180 @@ def run_rag_evaluation(session: Session = Depends(get_session)):
         custom_count=custom_count,
         category_metrics=build_category_metrics(results),
         quality_gate=quality_gate,
+        results=results,
+    )
+
+
+def get_document_evidence(document: object) -> str:
+    metadata = getattr(document, "metadata", {}) or {}
+    return " ".join(
+        str(value)
+        for value in (
+            metadata.get("name", ""),
+            getattr(document, "page_content", ""),
+        )
+        if value
+    )
+
+
+def has_citation_location(document: object) -> bool:
+    metadata = getattr(document, "metadata", {}) or {}
+    return any(
+        metadata.get(key) not in (None, "")
+        for key in (
+            "source",
+            "source_url",
+            "location",
+            "page_number",
+            "chunk_index",
+        )
+    )
+
+
+def get_quality_answer_keywords(case: dict) -> list[str]:
+    configured_keywords = case.get("answer_keywords", [])
+    if isinstance(configured_keywords, list) and configured_keywords:
+        return [str(keyword) for keyword in configured_keywords if str(keyword).strip()]
+    if case.get("expected_refusal"):
+        return []
+    expected_name = case.get("expected_name")
+    return [str(expected_name)] if expected_name else []
+
+
+def get_quality_citation_names(case: dict) -> list[str]:
+    configured_names = case.get("citation_names", [])
+    if isinstance(configured_names, list) and configured_names:
+        return [str(name) for name in configured_names if str(name).strip()]
+    if case.get("expected_refusal"):
+        return []
+    expected_name = case.get("expected_name")
+    return [str(expected_name)] if expected_name else []
+
+
+def evaluate_quality_case(
+    vector_store: object,
+    case: dict,
+) -> RAGQualityCaseResult:
+    selected_matches = get_current_matches(vector_store, case)
+    evidence = " ".join(
+        get_document_evidence(document) for document, _ in selected_matches
+    ).casefold()
+    answer_keywords = get_quality_answer_keywords(case)
+    missing_answer_keywords = [
+        keyword for keyword in answer_keywords if keyword.casefold() not in evidence
+    ]
+    refusal_observed = not selected_matches
+    expected_refusal = bool(case.get("expected_refusal", False))
+    answer_correct = (
+        refusal_observed if expected_refusal else not missing_answer_keywords
+    )
+
+    expected_citation_names = get_quality_citation_names(case)
+    cited_names: list[str] = []
+    for document, _ in selected_matches:
+        name = get_match_name(document)
+        if name not in cited_names:
+            cited_names.append(name)
+    missing_citation_names = [
+        name for name in expected_citation_names if name not in cited_names
+    ]
+    citation_has_location = (
+        expected_refusal
+        and refusal_observed
+        or bool(selected_matches)
+        and all(has_citation_location(document) for document, _ in selected_matches)
+    )
+    citation_correct = (
+        refusal_observed
+        if expected_refusal
+        else bool(expected_citation_names)
+        and not missing_citation_names
+        and citation_has_location
+    )
+    refusal_correct = expected_refusal == refusal_observed
+
+    if expected_refusal:
+        if refusal_observed:
+            diagnostic = "正确拒答：没有检索到达到相关度阈值的资料。"
+        else:
+            diagnostic = "拒答失败：检索到了资料，系统可能会继续生成回答。"
+    else:
+        diagnostic_parts = []
+        diagnostic_parts.append(
+            "答案证据完整" if answer_correct else "答案证据不完整"
+        )
+        diagnostic_parts.append(
+            "引用正确且有位置" if citation_correct else "引用资料或位置不完整"
+        )
+        diagnostic = "；".join(diagnostic_parts) + "。"
+
+    return RAGQualityCaseResult(
+        case_id=str(case.get("case_id", "unknown")),
+        case_source=str(case.get("case_source", "未标注来源")),
+        question=str(case.get("question", "")),
+        category=get_case_category(case),
+        expected_refusal=expected_refusal,
+        answer_correct=answer_correct,
+        citation_correct=citation_correct,
+        refusal_observed=refusal_observed,
+        refusal_correct=refusal_correct,
+        answer_keyword_count=len(answer_keywords),
+        answer_match_count=len(answer_keywords) - len(missing_answer_keywords),
+        missing_answer_keywords=missing_answer_keywords,
+        expected_citation_names=expected_citation_names,
+        cited_names=cited_names,
+        missing_citation_names=missing_citation_names,
+        citation_has_location=citation_has_location,
+        retrieved_count=len(selected_matches),
+        diagnostic=diagnostic,
+    )
+
+
+@router.post("/quality", response_model=RAGQualityResponse)
+def run_rag_quality_evaluation(session: Session = Depends(get_session)):
+    """Evaluate evidence support, citation quality, and refusal behavior deterministically."""
+    knowledge_status = get_knowledge_status(session)
+    if not knowledge_status["is_current"]:
+        raise HTTPException(
+            status_code=409,
+            detail="知识库已过期，请先重建知识库后再运行质量评测",
+        )
+
+    try:
+        vector_store = get_vector_store()
+        cases, custom_count = get_quality_evaluation_cases(session)
+        results = [evaluate_quality_case(vector_store, case) for case in cases]
+    except Exception as error:
+        raise HTTPException(
+            status_code=503,
+            detail="回答质量评测暂时不可用，请检查知识库和 Embedding 配置",
+        ) from error
+
+    total_count = len(results)
+    answer_correct_count = sum(result.answer_correct for result in results)
+    citation_correct_count = sum(result.citation_correct for result in results)
+    refusal_correct_count = sum(result.refusal_correct for result in results)
+    expected_refusal_count = sum(result.expected_refusal for result in results)
+    refusal_observed_count = sum(result.refusal_observed for result in results)
+
+    def rate(count: int) -> float:
+        return count / total_count if total_count else 0
+
+    return RAGQualityResponse(
+        metrics={
+            "total_count": total_count,
+            "answer_correct_count": answer_correct_count,
+            "answer_accuracy": rate(answer_correct_count),
+            "citation_correct_count": citation_correct_count,
+            "citation_accuracy": rate(citation_correct_count),
+            "refusal_correct_count": refusal_correct_count,
+            "refusal_accuracy": rate(refusal_correct_count),
+            "refusal_expected_count": expected_refusal_count,
+            "refusal_observed_count": refusal_observed_count,
+            "refusal_rate": rate(refusal_observed_count),
+        },
+        preset_count=len(EVALUATION_CASES) + len(QUALITY_ONLY_CASES),
+        custom_count=custom_count,
         results=results,
     )
 

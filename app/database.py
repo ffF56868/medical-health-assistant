@@ -1,5 +1,6 @@
 import os
 
+from sqlalchemy import inspect
 from sqlalchemy.engine import Engine
 from sqlmodel import Session, SQLModel, create_engine
 
@@ -55,6 +56,9 @@ SQLITE_COLUMN_MIGRATIONS = {
     "ragevaluationcase": {
         "category": "VARCHAR(50) NOT NULL DEFAULT '自定义'",
         "alternative_names_json": "TEXT NOT NULL DEFAULT '[]'",
+        "answer_keywords_json": "TEXT NOT NULL DEFAULT '[]'",
+        "citation_names_json": "TEXT NOT NULL DEFAULT '[]'",
+        "expected_refusal": "BOOLEAN NOT NULL DEFAULT 0",
     },
     "ragevaluationrun": {
         "results_json": "TEXT NOT NULL DEFAULT '[]'",
@@ -72,31 +76,57 @@ SQLITE_COLUMN_MIGRATIONS = {
 }
 
 
-def ensure_sqlite_metadata_columns(database_engine: Engine) -> None:
-    """Add only missing metadata columns so existing SQLite data stays intact."""
-    if database_engine.url.get_backend_name() != "sqlite":
+def ensure_metadata_columns(database_engine: Engine) -> None:
+    """Add missing metadata columns for existing SQLite or MySQL databases."""
+    backend = database_engine.url.get_backend_name()
+    if backend not in {"sqlite", "mysql"}:
         return
 
     with database_engine.begin() as connection:
+        inspector = inspect(connection)
+        table_names = set(inspector.get_table_names())
         for table_name, columns in SQLITE_COLUMN_MIGRATIONS.items():
-            existing_columns = {
-                row[1]
-                for row in connection.exec_driver_sql(
-                    f'PRAGMA table_info("{table_name}")'
-                )
-            }
+            if table_name not in table_names:
+                continue
+            if backend == "sqlite":
+                existing_columns = {
+                    row[1]
+                    for row in connection.exec_driver_sql(
+                        f'PRAGMA table_info("{table_name}")'
+                    )
+                }
+            else:
+                existing_columns = {
+                    column["name"] for column in inspector.get_columns(table_name)
+                }
             for column_name, definition in columns.items():
                 if column_name not in existing_columns:
+                    identifier_quote = '"' if backend == "sqlite" else "`"
+                    column_definition = definition
+                    if (
+                        backend == "mysql"
+                        and definition.startswith("TEXT")
+                        and " DEFAULT " in definition
+                    ):
+                        column_definition = definition.split(" DEFAULT ", 1)[0].replace(
+                            " NOT NULL", " NULL"
+                        )
                     connection.exec_driver_sql(
-                        f'ALTER TABLE "{table_name}" '
-                        f'ADD COLUMN "{column_name}" {definition}'
+                        f"ALTER TABLE {identifier_quote}{table_name}{identifier_quote} "
+                        f"ADD COLUMN {identifier_quote}{column_name}{identifier_quote} {column_definition}"
                     )
+
+
+def ensure_sqlite_metadata_columns(database_engine: Engine) -> None:
+    """Backward-compatible wrapper retained for existing callers and tests."""
+    if database_engine.url.get_backend_name() == "sqlite":
+        ensure_metadata_columns(database_engine)
 
 
 def create_db_and_tables(target_engine: Engine | None = None) -> None:
     database_engine = target_engine or engine
     SQLModel.metadata.create_all(database_engine)
-    ensure_sqlite_metadata_columns(database_engine)
+    ensure_metadata_columns(database_engine)
 
 
 def get_session():

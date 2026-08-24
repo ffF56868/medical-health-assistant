@@ -124,6 +124,9 @@ class RAGEvaluationCase(SQLModel, table=True):
     expected_type: str = Field(max_length=20)
     category: str = Field(default="自定义", max_length=50)
     alternative_names_json: str = Field(default="[]", max_length=2000)
+    answer_keywords_json: str = Field(default="[]", sa_type=Text)
+    citation_names_json: str = Field(default="[]", sa_type=Text)
+    expected_refusal: bool = Field(default=False)
     created_at: datetime = Field(
         default_factory=lambda: datetime.now(UTC),
         index=True,

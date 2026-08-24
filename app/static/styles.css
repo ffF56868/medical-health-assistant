@@ -412,6 +412,32 @@ h2 { font-size: 20px; margin: 0; }
 
 .evaluation-quality-gate p { margin: 3px 0 0; }
 
+.quality-evaluation { border-top: 1px solid #dce4e5; margin-top: 18px; padding-top: 14px; }
+
+.quality-evaluation h4 { color: #254b4d; font-size: 14px; margin: 0; }
+
+.quality-evaluation-status { color: #526166; font-size: 13px; min-height: 20px; margin: 8px 0 0; }
+
+.quality-evaluation-status.error { color: #9c3024; }
+
+.quality-evaluation-metrics { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+
+.quality-evaluation-results { display: grid; gap: 8px; margin-top: 12px; }
+
+.quality-evaluation-result { border-left: 3px solid #86aaa6; padding: 7px 0 7px 10px; }
+
+.quality-evaluation-result.failed { border-left-color: #c1543f; }
+
+.quality-evaluation-result h5 { color: #254b4d; font-size: 14px; margin: 0; }
+
+.quality-evaluation-result p { color: #526166; font-size: 13px; line-height: 1.55; margin: 3px 0 0; }
+
+.quality-evaluation-result.failed p { color: #8b4b10; }
+
+.evaluation-checkbox { align-items: center; display: flex !important; gap: 7px !important; min-height: 34px; }
+
+.evaluation-checkbox input { accent-color: #315b5d; height: 16px; width: 16px; }
+
 .retrieval-comparison { border-top: 1px solid #dce4e5; margin-top: 18px; padding-top: 14px; }
 
 .retrieval-comparison h4 { color: #254b4d; font-size: 14px; margin: 0; }

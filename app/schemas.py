@@ -617,6 +617,9 @@ class RAGEvaluationCaseCreate(SQLModel):
     expected_type: str = Field(min_length=1, max_length=20)
     category: str = Field(default="自定义", min_length=1, max_length=50)
     alternative_names: list[str] = Field(default_factory=list)
+    answer_keywords: list[str] = Field(default_factory=list)
+    citation_names: list[str] = Field(default_factory=list)
+    expected_refusal: bool = False
 
     _strip_question = field_validator("question", mode="before")(strip_required_text)
     _strip_expected_name = field_validator("expected_name", mode="before")(
@@ -629,6 +632,12 @@ class RAGEvaluationCaseCreate(SQLModel):
     _normalize_alternative_names = field_validator(
         "alternative_names", mode="before"
     )(normalize_alternative_names)
+    _normalize_answer_keywords = field_validator(
+        "answer_keywords", mode="before"
+    )(normalize_alternative_names)
+    _normalize_citation_names = field_validator(
+        "citation_names", mode="before"
+    )(normalize_alternative_names)
 
 
 class RAGEvaluationCaseRead(RAGEvaluationCaseCreate):
@@ -639,6 +648,47 @@ class RAGEvaluationCaseRead(RAGEvaluationCaseCreate):
 class RAGEvaluationCaseListResponse(SQLModel):
     total_count: int
     cases: list[RAGEvaluationCaseRead] = Field(default_factory=list)
+
+
+class RAGQualityCaseResult(SQLModel):
+    case_id: str
+    case_source: str
+    question: str
+    category: str
+    expected_refusal: bool
+    answer_correct: bool
+    citation_correct: bool
+    refusal_observed: bool
+    refusal_correct: bool
+    answer_keyword_count: int
+    answer_match_count: int
+    missing_answer_keywords: list[str] = Field(default_factory=list)
+    expected_citation_names: list[str] = Field(default_factory=list)
+    cited_names: list[str] = Field(default_factory=list)
+    missing_citation_names: list[str] = Field(default_factory=list)
+    citation_has_location: bool
+    retrieved_count: int
+    diagnostic: str
+
+
+class RAGQualityMetrics(SQLModel):
+    total_count: int
+    answer_correct_count: int
+    answer_accuracy: float
+    citation_correct_count: int
+    citation_accuracy: float
+    refusal_correct_count: int
+    refusal_accuracy: float
+    refusal_expected_count: int
+    refusal_observed_count: int
+    refusal_rate: float
+
+
+class RAGQualityResponse(SQLModel):
+    metrics: RAGQualityMetrics
+    preset_count: int
+    custom_count: int
+    results: list[RAGQualityCaseResult] = Field(default_factory=list)
 
 
 class KnowledgeRebuildResponse(SQLModel):

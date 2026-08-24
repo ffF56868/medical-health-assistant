@@ -229,6 +229,7 @@
               <div class="evaluation-actions">
                 <button class="secondary-button" id="diagnose-retrieval" type="button">诊断当前检索</button>
                 <button class="secondary-button" id="compare-retrieval" type="button">对比新旧检索</button>
+                <button class="secondary-button" id="run-quality-evaluation" type="button">评估回答质量</button>
                 <button class="secondary-button" id="run-rag-evaluation" type="button">运行全部评测</button>
               </div>
             </div>
@@ -242,6 +243,12 @@
               <label for="evaluation-alternative-names">同类型的可接受资料（可选）
                 <input id="evaluation-alternative-names" maxlength="1000" placeholder="多个名称用逗号分隔" />
               </label>
+              <label for="evaluation-answer-keywords">标准答案关键词（可选）
+                <input id="evaluation-answer-keywords" maxlength="1000" placeholder="例如：发热、疼痛" />
+              </label>
+              <label for="evaluation-citation-names">标准引用资料（可选）
+                <input id="evaluation-citation-names" maxlength="1000" placeholder="例如：布洛芬" />
+              </label>
               <label for="evaluation-category">评测分类
                 <select id="evaluation-category" required>
                   <option value="自定义">自定义</option>
@@ -250,6 +257,10 @@
                   <option value="生活方式">生活方式</option>
                   <option value="紧急警示">紧急警示</option>
                 </select>
+              </label>
+              <label class="evaluation-checkbox" for="evaluation-expected-refusal">
+                <input id="evaluation-expected-refusal" type="checkbox" />
+                这道题应该拒答
               </label>
               <label for="evaluation-expected-type">资料类型
                 <select id="evaluation-expected-type" required>
@@ -266,6 +277,12 @@
             <div class="evaluation-metrics" id="evaluation-metrics"></div>
             <div class="evaluation-results" id="evaluation-results"></div>
             <div class="evaluation-quality-gate" id="evaluation-quality-gate"></div>
+            <section class="quality-evaluation" aria-labelledby="quality-evaluation-title">
+              <h4 id="quality-evaluation-title">答案、引用与拒答评估</h4>
+              <p class="quality-evaluation-status" id="quality-evaluation-status" aria-live="polite"></p>
+              <div class="quality-evaluation-metrics" id="quality-evaluation-metrics"></div>
+              <div class="quality-evaluation-results" id="quality-evaluation-results"></div>
+            </section>
             <section class="retrieval-comparison" aria-labelledby="retrieval-comparison-title">
               <h4 id="retrieval-comparison-title">新旧检索结果</h4>
               <p class="comparison-status" id="comparison-status" aria-live="polite"></p>
