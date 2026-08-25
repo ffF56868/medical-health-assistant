@@ -206,6 +206,36 @@
           </div>
           <p class="dashboard-status" id="dashboard-status" aria-live="polite"></p>
           <div class="metric-grid" id="feedback-metrics"></div>
+          <section class="dashboard-section monitoring-section" aria-labelledby="monitoring-title">
+            <div class="evaluation-heading">
+              <div>
+                <p class="eyebrow">运行监控</p>
+                <h3 id="monitoring-title">最近一段时间的系统状态</h3>
+              </div>
+              <div class="monitoring-actions">
+                <label for="monitoring-window">统计范围
+                  <select id="monitoring-window">
+                    <option value="24">最近 24 小时</option>
+                    <option value="72">最近 3 天</option>
+                    <option value="168">最近 7 天</option>
+                  </select>
+                </label>
+                <button class="secondary-button" id="refresh-monitoring" type="button">刷新监控</button>
+              </div>
+            </div>
+            <p class="monitoring-status" id="monitoring-status" aria-live="polite"></p>
+            <div class="metric-grid monitoring-metrics" id="monitoring-metrics"></div>
+            <div class="dashboard-grid">
+              <section class="dashboard-section">
+                <p class="eyebrow">按处理路径</p>
+                <div class="monitoring-path-list" id="monitoring-path-list"></div>
+              </section>
+              <section class="dashboard-section">
+                <p class="eyebrow">最近失败</p>
+                <div class="monitoring-failure-list" id="monitoring-failure-list"></div>
+              </section>
+            </div>
+          </section>
           <div class="dashboard-grid">
             <section class="dashboard-section">
               <p class="eyebrow">常见反馈原因</p>

@@ -18,6 +18,7 @@ from app.routers import (
     evaluation,
     feedback,
     knowledge,
+    monitoring,
 )
 
 
@@ -43,6 +44,7 @@ def client(test_engine) -> Generator[TestClient, None, None]:
     test_app.include_router(documents.router)
     test_app.include_router(feedback.router)
     test_app.include_router(evaluation.router)
+    test_app.include_router(monitoring.router)
     test_app.include_router(auth.router)
 
     def override_get_session():
@@ -70,6 +72,7 @@ def auth_client(test_engine) -> Generator[TestClient, None, None]:
     test_app.include_router(documents.router)
     test_app.include_router(feedback.router)
     test_app.include_router(evaluation.router)
+    test_app.include_router(monitoring.router)
     test_app.include_router(auth.router)
 
     def override_get_session():

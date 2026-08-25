@@ -4,7 +4,12 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlmodel import Session, select
 
 from app.database import get_session
-from app.models import KnowledgeIndexState, RAGEvaluationCase, RAGEvaluationRun
+from app.models import (
+    KnowledgeIndexState,
+    RAGEvaluationCase,
+    RAGEvaluationRun,
+    RAGQualityEvaluationRun,
+)
 from app.routers.auth import require_admin
 from app.schemas import (
     RAGEvaluationCaseCreate,
@@ -944,19 +949,34 @@ def run_rag_quality_evaluation(session: Session = Depends(get_session)):
     def rate(count: int) -> float:
         return count / total_count if total_count else 0
 
+    quality_metrics = {
+        "total_count": total_count,
+        "answer_correct_count": answer_correct_count,
+        "answer_accuracy": rate(answer_correct_count),
+        "citation_correct_count": citation_correct_count,
+        "citation_accuracy": rate(citation_correct_count),
+        "refusal_correct_count": refusal_correct_count,
+        "refusal_accuracy": rate(refusal_correct_count),
+        "refusal_expected_count": expected_refusal_count,
+        "refusal_observed_count": refusal_observed_count,
+        "refusal_rate": rate(refusal_observed_count),
+    }
+    knowledge_index = session.get(KnowledgeIndexState, 1)
+    quality_run = RAGQualityEvaluationRun(
+        **quality_metrics,
+        knowledge_document_count=knowledge_status.get("document_count", 0),
+        knowledge_hash=knowledge_index.content_hash if knowledge_index else None,
+        results_json=json.dumps(
+            [result.model_dump() for result in results],
+            ensure_ascii=False,
+        ),
+    )
+    session.add(quality_run)
+    session.commit()
+    session.refresh(quality_run)
     return RAGQualityResponse(
-        metrics={
-            "total_count": total_count,
-            "answer_correct_count": answer_correct_count,
-            "answer_accuracy": rate(answer_correct_count),
-            "citation_correct_count": citation_correct_count,
-            "citation_accuracy": rate(citation_correct_count),
-            "refusal_correct_count": refusal_correct_count,
-            "refusal_accuracy": rate(refusal_correct_count),
-            "refusal_expected_count": expected_refusal_count,
-            "refusal_observed_count": refusal_observed_count,
-            "refusal_rate": rate(refusal_observed_count),
-        },
+        history_id=quality_run.id,
+        metrics=quality_metrics,
         preset_count=len(EVALUATION_CASES) + len(QUALITY_ONLY_CASES),
         custom_count=custom_count,
         results=results,

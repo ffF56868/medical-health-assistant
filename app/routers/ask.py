@@ -18,6 +18,7 @@ from app.hybrid_search import (
     get_retrieval_method,
     hybrid_search,
 )
+from app.monitoring import record_request_metric
 from app.source_metadata import needs_source_review
 from app.vector_store import (
     RAG_RETRIEVAL_FETCH_COUNT,
@@ -441,6 +442,19 @@ def ask_question(
             metadata,
             user_id=current_user.id,
         )
+        session.flush()
+        record_request_metric(
+            session,
+            user_id=current_user.id,
+            assistant_message_id=assistant_message.id,
+            endpoint="ask",
+            success=True,
+            status_code=200,
+            request_type="safety_guard",
+            processing_path=metadata["processing_path"],
+            retrieved_count=metadata["retrieved_count"],
+            latency_ms=metadata["latency_ms"],
+        )
         session.commit()
         session.refresh(assistant_message)
         return AskResponse(
@@ -459,6 +473,18 @@ def ask_question(
 
     knowledge_status = get_knowledge_status(session)
     if not knowledge_status["is_current"]:
+        record_request_metric(
+            session,
+            user_id=current_user.id,
+            endpoint="ask",
+            success=False,
+            status_code=409,
+            request_type="error",
+            processing_path="knowledge-stale",
+            latency_ms=round((perf_counter() - started_at) * 1000),
+            error_type="knowledge_stale",
+        )
+        session.commit()
         raise HTTPException(
             status_code=409,
             detail="知识库已过期，请先执行 POST /knowledge/rebuild",
@@ -476,6 +502,18 @@ def ask_question(
             request.question,
         )
     except Exception as error:
+        record_request_metric(
+            session,
+            user_id=current_user.id,
+            endpoint="ask",
+            success=False,
+            status_code=503,
+            request_type="error",
+            processing_path="retrieval-error",
+            latency_ms=round((perf_counter() - started_at) * 1000),
+            error_type="retrieval_error",
+        )
+        session.commit()
         raise HTTPException(
             status_code=503,
             detail="知识库暂时不可用，请确认已执行 /knowledge/rebuild",
@@ -513,6 +551,19 @@ def ask_question(
             answer,
             metadata,
             user_id=current_user.id,
+        )
+        session.flush()
+        record_request_metric(
+            session,
+            user_id=current_user.id,
+            assistant_message_id=assistant_message.id,
+            endpoint="ask",
+            success=True,
+            status_code=200,
+            request_type="no_match",
+            processing_path=metadata["processing_path"],
+            retrieved_count=metadata["retrieved_count"],
+            latency_ms=metadata["latency_ms"],
         )
         session.commit()
         session.refresh(assistant_message)
@@ -573,6 +624,19 @@ def ask_question(
         )
         answer = str(response.content)
     except Exception as error:
+        record_request_metric(
+            session,
+            user_id=current_user.id,
+            endpoint="ask",
+            success=False,
+            status_code=503,
+            request_type="rag",
+            processing_path="generation-error",
+            retrieved_count=len(relevant_documents),
+            latency_ms=round((perf_counter() - started_at) * 1000),
+            error_type="generation_error",
+        )
+        session.commit()
         raise HTTPException(
             status_code=503,
             detail="模型暂时不可用，请检查 CHAT_MODEL 和 API 配置",
@@ -602,6 +666,19 @@ def ask_question(
         answer,
         metadata,
         user_id=current_user.id,
+    )
+    session.flush()
+    record_request_metric(
+        session,
+        user_id=current_user.id,
+        assistant_message_id=assistant_message.id,
+        endpoint="ask",
+        success=True,
+        status_code=200,
+        request_type="rag",
+        processing_path=metadata["processing_path"],
+        retrieved_count=metadata["retrieved_count"],
+        latency_ms=metadata["latency_ms"],
     )
     session.commit()
     session.refresh(assistant_message)
@@ -678,6 +755,19 @@ def stream_answer(
                 metadata,
                 user_id=current_user.id,
             )
+            session.flush()
+            record_request_metric(
+                session,
+                user_id=current_user.id,
+                assistant_message_id=assistant_message.id,
+                endpoint="ask/stream",
+                success=True,
+                status_code=200,
+                request_type="safety_guard",
+                processing_path=metadata["processing_path"],
+                retrieved_count=metadata["retrieved_count"],
+                latency_ms=metadata["latency_ms"],
+            )
             session.commit()
             session.refresh(assistant_message)
             yield format_sse_event(
@@ -698,6 +788,18 @@ def stream_answer(
 
     knowledge_status = get_knowledge_status(session)
     if not knowledge_status["is_current"]:
+        record_request_metric(
+            session,
+            user_id=current_user.id,
+            endpoint="ask/stream",
+            success=False,
+            status_code=409,
+            request_type="error",
+            processing_path="knowledge-stale",
+            latency_ms=round((perf_counter() - started_at) * 1000),
+            error_type="knowledge_stale",
+        )
+        session.commit()
         raise HTTPException(
             status_code=409,
             detail="知识库已过期，请先执行 POST /knowledge/rebuild",
@@ -715,6 +817,18 @@ def stream_answer(
             request.question,
         )
     except Exception as error:
+        record_request_metric(
+            session,
+            user_id=current_user.id,
+            endpoint="ask/stream",
+            success=False,
+            status_code=503,
+            request_type="error",
+            processing_path="retrieval-error",
+            latency_ms=round((perf_counter() - started_at) * 1000),
+            error_type="retrieval_error",
+        )
+        session.commit()
         raise HTTPException(
             status_code=503,
             detail="知识库暂时不可用，请确认已执行 /knowledge/rebuild",
@@ -754,6 +868,19 @@ def stream_answer(
                 no_match_answer,
                 metadata,
                 user_id=current_user.id,
+            )
+            session.flush()
+            record_request_metric(
+                session,
+                user_id=current_user.id,
+                assistant_message_id=assistant_message.id,
+                endpoint="ask/stream",
+                success=True,
+                status_code=200,
+                request_type="no_match",
+                processing_path=metadata["processing_path"],
+                retrieved_count=metadata["retrieved_count"],
+                latency_ms=metadata["latency_ms"],
             )
             session.commit()
             session.refresh(assistant_message)
@@ -831,6 +958,19 @@ def stream_answer(
                 answer_parts.append(text)
                 yield format_sse_event("token", {"text": text})
         except Exception:
+            record_request_metric(
+                session,
+                user_id=current_user.id,
+                endpoint="ask/stream",
+                success=False,
+                status_code=503,
+                request_type="rag",
+                processing_path="generation-error",
+                retrieved_count=len(relevant_documents),
+                latency_ms=round((perf_counter() - started_at) * 1000),
+                error_type="generation_error",
+            )
+            session.commit()
             yield format_sse_event(
                 "error",
                 {"detail": "模型暂时不可用，请检查 CHAT_MODEL 和 API 配置"},
@@ -839,6 +979,19 @@ def stream_answer(
 
         answer = "".join(answer_parts).strip()
         if not answer:
+            record_request_metric(
+                session,
+                user_id=current_user.id,
+                endpoint="ask/stream",
+                success=False,
+                status_code=502,
+                request_type="rag",
+                processing_path="generation-empty",
+                retrieved_count=len(relevant_documents),
+                latency_ms=round((perf_counter() - started_at) * 1000),
+                error_type="empty_generation",
+            )
+            session.commit()
             yield format_sse_event("error", {"detail": "模型没有返回可用内容"})
             return
         metadata = build_response_metadata(
@@ -864,6 +1017,19 @@ def stream_answer(
             answer,
             metadata,
             user_id=current_user.id,
+        )
+        session.flush()
+        record_request_metric(
+            session,
+            user_id=current_user.id,
+            assistant_message_id=assistant_message.id,
+            endpoint="ask/stream",
+            success=True,
+            status_code=200,
+            request_type="rag",
+            processing_path=metadata["processing_path"],
+            retrieved_count=metadata["retrieved_count"],
+            latency_ms=metadata["latency_ms"],
         )
         session.commit()
         session.refresh(assistant_message)

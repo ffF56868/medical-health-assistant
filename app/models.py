@@ -149,6 +149,45 @@ class RAGEvaluationRun(SQLModel, table=True):
     )
 
 
+class RAGQualityEvaluationRun(SQLModel, table=True):
+    id: int | None = Field(default=None, primary_key=True)
+    total_count: int
+    answer_correct_count: int
+    answer_accuracy: float
+    citation_correct_count: int
+    citation_accuracy: float
+    refusal_correct_count: int
+    refusal_accuracy: float
+    refusal_expected_count: int
+    refusal_observed_count: int
+    refusal_rate: float
+    knowledge_document_count: int
+    knowledge_hash: str | None = Field(default=None, max_length=64)
+    results_json: str = Field(default="[]", sa_type=Text)
+    created_at: datetime = Field(
+        default_factory=lambda: datetime.now(UTC),
+        index=True,
+    )
+
+
+class RAGRequestMetric(SQLModel, table=True):
+    id: int | None = Field(default=None, primary_key=True)
+    user_id: int | None = Field(default=None, index=True)
+    assistant_message_id: int | None = Field(default=None, index=True)
+    endpoint: str = Field(default="ask/stream", max_length=30)
+    success: bool = Field(default=True, index=True)
+    status_code: int = Field(default=200)
+    request_type: str = Field(default="rag", max_length=30, index=True)
+    processing_path: str = Field(default="unknown", max_length=120)
+    retrieved_count: int = Field(default=0)
+    latency_ms: int = Field(default=0)
+    error_type: str | None = Field(default=None, max_length=120)
+    created_at: datetime = Field(
+        default_factory=lambda: datetime.now(UTC),
+        index=True,
+    )
+
+
 class User(SQLModel, table=True):
     id: int | None = Field(default=None, primary_key=True)
     account: str = Field(index=True, unique=True, max_length=200)

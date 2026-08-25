@@ -90,6 +90,28 @@ h2 { font-size: 20px; margin: 0; }
 
 .is-hidden { display: none; }
 
+.monitoring-section { border-top: 1px solid #dce4e5; margin-top: 18px; padding-top: 18px; }
+
+.monitoring-actions { align-items: end; display: flex; flex-wrap: wrap; gap: 8px; }
+
+.monitoring-actions label { color: #526166; display: grid; font-size: 12px; gap: 4px; }
+
+.monitoring-actions select { background: #fff; border: 1px solid #b9ccca; border-radius: 4px; color: #1e3034; font: inherit; padding: 7px 8px; }
+
+.monitoring-status { color: #526166; font-size: 13px; min-height: 20px; margin: 8px 0 0; }
+
+.monitoring-metrics { margin-top: 10px; }
+
+.monitoring-path-list, .monitoring-failure-list { display: grid; gap: 7px; }
+
+.monitoring-path-item, .monitoring-failure-item { background: #f6f9f8; border: 1px solid #dce4e5; padding: 9px 10px; }
+
+.monitoring-path-item strong, .monitoring-failure-item strong { color: #315b5d; font-size: 13px; }
+
+.monitoring-path-item p, .monitoring-failure-item p { color: #607176; font-size: 12px; line-height: 1.5; margin: 4px 0 0; }
+
+.monitoring-failure-item { border-left: 3px solid #c1543f; }
+
 .manager-heading { align-items: end; border-bottom: 1px solid #dce4e5; display: flex; gap: 24px; justify-content: space-between; padding-bottom: 20px; }
 
 .manager-heading p:last-child { color: #526166; font-size: 14px; line-height: 1.6; margin: 0; max-width: 470px; }

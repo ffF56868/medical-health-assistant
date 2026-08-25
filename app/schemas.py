@@ -685,10 +685,66 @@ class RAGQualityMetrics(SQLModel):
 
 
 class RAGQualityResponse(SQLModel):
+    history_id: int | None = None
     metrics: RAGQualityMetrics
     preset_count: int
     custom_count: int
     results: list[RAGQualityCaseResult] = Field(default_factory=list)
+
+
+class MonitoringPathMetric(SQLModel):
+    processing_path: str
+    request_count: int
+    success_count: int
+    failure_count: int
+    average_latency_ms: float
+    retrieval_hit_rate: float | None = None
+
+
+class MonitoringFailureRead(SQLModel):
+    endpoint: str
+    status_code: int
+    request_type: str
+    processing_path: str
+    error_type: str | None = None
+    latency_ms: int
+    created_at: datetime
+
+
+class MonitoringQualitySnapshot(SQLModel):
+    retrieval_pass_rate: float | None = None
+    answer_accuracy: float | None = None
+    citation_accuracy: float | None = None
+    refusal_accuracy: float | None = None
+    evaluated_at: datetime | None = None
+
+
+class MonitoringFeedbackSnapshot(SQLModel):
+    total_count: int
+    helpful_count: int
+    not_helpful_count: int
+    helpful_rate: float | None = None
+
+
+class MonitoringSummary(SQLModel):
+    window_hours: int
+    window_started_at: datetime
+    generated_at: datetime
+    request_count: int
+    successful_request_count: int
+    failed_request_count: int
+    success_rate: float
+    failure_rate: float
+    retrieval_attempt_count: int
+    retrieval_hit_count: int
+    retrieval_hit_rate: float | None = None
+    average_latency_ms: float | None = None
+    p50_latency_ms: int | None = None
+    p95_latency_ms: int | None = None
+    quality: MonitoringQualitySnapshot
+    feedback: MonitoringFeedbackSnapshot
+    path_metrics: list[MonitoringPathMetric] = Field(default_factory=list)
+    recent_failures: list[MonitoringFailureRead] = Field(default_factory=list)
 
 
 class KnowledgeRebuildResponse(SQLModel):

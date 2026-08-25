@@ -51,6 +51,12 @@ const qualityDashboard = document.querySelector("#quality-dashboard");
 const refreshFeedbackButton = document.querySelector("#refresh-feedback");
 const dashboardStatus = document.querySelector("#dashboard-status");
 const feedbackMetrics = document.querySelector("#feedback-metrics");
+const refreshMonitoringButton = document.querySelector("#refresh-monitoring");
+const monitoringWindow = document.querySelector("#monitoring-window");
+const monitoringStatus = document.querySelector("#monitoring-status");
+const monitoringMetrics = document.querySelector("#monitoring-metrics");
+const monitoringPathList = document.querySelector("#monitoring-path-list");
+const monitoringFailureList = document.querySelector("#monitoring-failure-list");
 const commonReasons = document.querySelector("#common-reasons");
 const recommendedActions = document.querySelector("#recommended-actions");
 const recentFeedbackList = document.querySelector("#recent-feedback-list");
@@ -949,6 +955,7 @@ function setFeedbackDashboardVisible(visible) {
   managerToggleButton.textContent = "管理资料";
   if (visible) {
     loadFeedbackDashboard();
+    loadMonitoring();
     loadCustomEvaluationCases();
     loadEvaluationHistory();
   }
@@ -1097,6 +1104,86 @@ function renderRagEvaluation(data) {
     evaluationResults.append(item);
   }
   renderEvaluationQualityGate(data.quality_gate);
+}
+
+function formatRate(value) {
+  return value === null || value === undefined
+    ? "暂无"
+    : `${Math.round(value * 100)}%`;
+}
+
+function renderMonitoring(data) {
+  monitoringMetrics.innerHTML = "";
+  const metrics = [
+    ["请求数", data.request_count],
+    ["检索命中率", data.retrieval_hit_rate === null ? "暂无" : formatRate(data.retrieval_hit_rate)],
+    ["答案正确率", formatRate(data.quality.answer_accuracy)],
+    ["引用正确率", formatRate(data.quality.citation_accuracy)],
+    ["平均耗时", data.average_latency_ms === null ? "暂无" : `${data.average_latency_ms} ms`],
+    ["P95 耗时", data.p95_latency_ms === null ? "暂无" : `${data.p95_latency_ms} ms`],
+    ["失败率", formatRate(data.failure_rate)],
+    ["有帮助率", formatRate(data.feedback.helpful_rate)],
+  ];
+  for (const [label, value] of metrics) {
+    const metric = document.createElement("section");
+    metric.className = "metric";
+    const metricLabel = document.createElement("p");
+    metricLabel.className = "metric-label";
+    metricLabel.textContent = label;
+    const metricValue = document.createElement("p");
+    metricValue.className = "metric-value";
+    metricValue.textContent = value;
+    metric.append(metricLabel, metricValue);
+    monitoringMetrics.append(metric);
+  }
+
+  monitoringPathList.innerHTML = "";
+  if (data.path_metrics.length === 0) {
+    appendInsight(monitoringPathList, "还没有问答请求记录。先发送一个问题，再刷新监控。 ");
+  } else {
+    for (const path of data.path_metrics) {
+      const item = document.createElement("article");
+      item.className = "monitoring-path-item";
+      const title = document.createElement("strong");
+      title.textContent = path.processing_path;
+      const detail = document.createElement("p");
+      const hitRate = path.retrieval_hit_rate === null
+        ? "不适用"
+        : formatRate(path.retrieval_hit_rate);
+      detail.textContent = `请求 ${path.request_count} 次｜成功 ${path.success_count}｜失败 ${path.failure_count}｜平均 ${path.average_latency_ms} ms｜命中率 ${hitRate}`;
+      item.append(title, detail);
+      monitoringPathList.append(item);
+    }
+  }
+
+  monitoringFailureList.innerHTML = "";
+  if (data.recent_failures.length === 0) {
+    appendInsight(monitoringFailureList, "当前统计范围内没有失败请求。 ");
+  } else {
+    for (const failure of data.recent_failures) {
+      const item = document.createElement("article");
+      item.className = "monitoring-failure-item";
+      const title = document.createElement("strong");
+      title.textContent = `${failure.status_code}｜${failure.error_type || "未知错误"}`;
+      const detail = document.createElement("p");
+      detail.textContent = `${failure.endpoint}｜${failure.processing_path}｜耗时 ${failure.latency_ms} ms｜${formatEvaluationTime(failure.created_at)}`;
+      item.append(title, detail);
+      monitoringFailureList.append(item);
+    }
+  }
+}
+
+async function loadMonitoring() {
+  monitoringStatus.textContent = "正在读取运行监控...";
+  try {
+    const response = await apiFetch(`/monitoring/summary?hours=${monitoringWindow.value}`);
+    const data = await response.json();
+    if (!response.ok) throw new Error(getErrorMessage(data, "读取监控失败。"));
+    renderMonitoring(data);
+    monitoringStatus.textContent = `已更新：统计最近 ${data.window_hours} 小时，共 ${data.request_count} 次请求。`;
+  } catch (error) {
+    monitoringStatus.textContent = `读取失败：${error.message}`;
+  }
 }
 
 function renderQualityEvaluation(data) {
@@ -2269,6 +2356,8 @@ feedbackDashboardToggle.addEventListener("click", () => {
   setFeedbackDashboardVisible(qualityDashboard.classList.contains("is-hidden"));
 });
 refreshFeedbackButton.addEventListener("click", loadFeedbackDashboard);
+refreshMonitoringButton.addEventListener("click", loadMonitoring);
+monitoringWindow.addEventListener("change", loadMonitoring);
 searchForm.addEventListener("submit", searchKnowledge);
 uploadForm.addEventListener("submit", uploadKnowledgeFile);
 webImportForm.addEventListener("submit", importWebKnowledge);
