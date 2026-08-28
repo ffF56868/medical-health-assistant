@@ -798,6 +798,8 @@ class KnowledgeStatusResponse(SQLModel):
     document_count: int
     chunk_count: int
     indexed_document_count: int | None = None
+    vector_store_type: str = "milvus"
+    vector_count: int | None = None
     indexed_at: datetime | None = None
     text_cleaning_version: str | None = None
     chunking_strategy: str | None = None

@@ -72,6 +72,8 @@ class KnowledgeIndexState(SQLModel, table=True):
     id: int = Field(default=1, primary_key=True)
     content_hash: str = Field(max_length=64)
     document_count: int
+    vector_store_type: str = Field(default="milvus", max_length=30)
+    vector_count: int = Field(default=0)
     indexed_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
 

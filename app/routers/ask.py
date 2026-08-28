@@ -177,7 +177,7 @@ def retrieval_labels(matches: list[tuple[object, float]]) -> tuple[str, str]:
             "rag-keyword-retrieval",
         )
     return (
-        "chroma-retrieval-openai-generation",
+        "milvus-retrieval-openai-generation",
         "rag-vector-retrieval",
     )
 
@@ -391,7 +391,7 @@ def ask_question(
     current_user: User = Depends(get_current_user),
     session: Session = Depends(get_session),
 ):
-    """同时使用 MySQL 关键词检索和 Chroma 向量检索获取资料。"""
+    """同时使用 MySQL 关键词检索和 Milvus 向量检索获取资料。"""
     started_at = perf_counter()
     history = session.exec(
         select(ChatMessage)
@@ -529,7 +529,7 @@ def ask_question(
     if not relevant_documents:
         answer = "知识库中没有找到足够相关的内容。建议换一种更具体的说法。"
         metadata = build_response_metadata(
-            source="chroma-vector-search:no-match",
+            source="milvus-vector-search:no-match",
             references=[],
             processing_path="vector-search-no-match",
             retrieval_scope=request.knowledge_type,
@@ -846,7 +846,7 @@ def stream_answer(
 
         def no_match_event_stream():
             metadata = build_response_metadata(
-                source="chroma-vector-search:no-match",
+                source="milvus-vector-search:no-match",
                 references=[],
                 processing_path="vector-search-no-match",
                 retrieval_scope=request.knowledge_type,

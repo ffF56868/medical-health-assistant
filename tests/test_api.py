@@ -1527,7 +1527,7 @@ def test_rag_returns_no_match_without_calling_the_chat_model(client, monkeypatch
 
     assert response.status_code == 200
     data = response.json()
-    assert data["source"] == "chroma-vector-search:no-match"
+    assert data["source"] == "milvus-vector-search:no-match"
     assert data["references"] == []
 
 

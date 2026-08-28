@@ -1,10 +1,10 @@
 import os
 from hashlib import sha256
 import json
-from pathlib import Path
+import socket
 
-from langchain_chroma import Chroma
 from langchain_core.documents import Document
+from langchain_milvus import Milvus
 from langchain_openai import OpenAIEmbeddings
 from sqlmodel import Session, select
 
@@ -24,6 +24,7 @@ from app.text_processing import (
 
 
 COLLECTION_NAME = "medical_health_knowledge"
+VECTOR_STORE_TYPE = "milvus"
 MIN_RELEVANCE_SCORE = 0.2
 RAG_RETRIEVAL_FETCH_COUNT = 8
 RAG_RETRIEVAL_RESULT_COUNT = 3
@@ -55,20 +56,110 @@ def select_distinct_relevant_matches(
     )[:limit]
 
 
-def get_vector_store() -> Chroma:
+def _quote_milvus_string(value: object) -> str:
+    escaped = str(value).replace("\\", "\\\\").replace('"', '\\"')
+    return f'"{escaped}"'
+
+
+def _milvus_filter_expression(filter_value: object) -> str | None:
+    """Convert the existing Chroma-style filter tree to a Milvus expression."""
+    if not isinstance(filter_value, dict) or not filter_value:
+        return None
+    if len(filter_value) == 1 and "$and" in filter_value:
+        children = [
+            _milvus_filter_expression(child)
+            for child in filter_value["$and"]
+        ]
+        expressions = [child for child in children if child]
+        return " and ".join(f"({child})" for child in expressions) or None
+    if len(filter_value) == 1 and "$or" in filter_value:
+        children = [
+            _milvus_filter_expression(child)
+            for child in filter_value["$or"]
+        ]
+        expressions = [child for child in children if child]
+        return " or ".join(f"({child})" for child in expressions) or None
+
+    expressions: list[str] = []
+    for field, value in filter_value.items():
+        if isinstance(value, bool):
+            rendered_value = "true" if value else "false"
+        elif isinstance(value, (int, float)) and not isinstance(value, bool):
+            rendered_value = str(value)
+        else:
+            rendered_value = _quote_milvus_string(value)
+        expressions.append(f"{field} == {rendered_value}")
+    return " and ".join(f"({expression})" for expression in expressions)
+
+
+class MilvusVectorStore(Milvus):
+    """Milvus adapter that keeps the project's existing vector-store API."""
+
+    def similarity_search_with_relevance_scores(
+        self,
+        query: str,
+        k: int = 4,
+        **kwargs: object,
+    ):
+        # Existing callers use Chroma's ``filter=`` keyword. Milvus calls the
+        # equivalent boolean expression ``expr``.
+        filter_value = kwargs.pop("filter", None)
+        if filter_value is not None and "expr" not in kwargs:
+            expression = _milvus_filter_expression(filter_value)
+            if expression:
+                kwargs["expr"] = expression
+        return super().similarity_search_with_relevance_scores(
+            query,
+            k=k,
+            **kwargs,
+        )
+
+    def delete_collection(self) -> None:
+        """Compatibility name used by the old Chroma rebuild flow."""
+        self.drop()
+
+
+def get_vector_store() -> MilvusVectorStore:
     embeddings = OpenAIEmbeddings(
         model=os.getenv("EMBEDDING_MODEL", "text-embedding-3-small")
     )
-    persist_directory = Path(
-        os.getenv("CHROMA_DIR", "chroma_db")
-    ).resolve()
-    persist_directory.mkdir(parents=True, exist_ok=True)
-
-    return Chroma(
-        collection_name=COLLECTION_NAME,
+    return MilvusVectorStore(
         embedding_function=embeddings,
-        persist_directory=str(persist_directory),
+        collection_name=COLLECTION_NAME,
+        connection_args={
+            "host": os.getenv("MILVUS_HOST", "milvus"),
+            "port": os.getenv("MILVUS_PORT", "19530"),
+        },
+        index_params={
+            "index_type": "AUTOINDEX",
+            "metric_type": "COSINE",
+            "params": {},
+        },
+        search_params={
+            "metric_type": "COSINE",
+            "params": {},
+        },
+        # Explicit metadata fields make filters and citations available after
+        # a new API process starts, not only in the process that inserted data.
+        enable_dynamic_field=False,
     )
+
+
+def get_milvus_vector_count() -> int | None:
+    """Return the current Milvus row count, or None while Milvus is unavailable."""
+    try:
+        host = os.getenv("MILVUS_HOST", "milvus")
+        port = int(os.getenv("MILVUS_PORT", "19530"))
+        # Avoid making the API health endpoint wait on a missing Milvus daemon.
+        with socket.create_connection((host, port), timeout=0.5):
+            pass
+        vector_store = get_vector_store()
+        if not vector_store.client.has_collection(COLLECTION_NAME):
+            return 0
+        stats = vector_store.client.get_collection_stats(COLLECTION_NAME)
+        return int(stats.get("row_count", 0))
+    except Exception:
+        return None
 
 
 def build_source_metadata(record: object) -> dict[str, str | bool]:
@@ -91,14 +182,14 @@ def build_source_metadata(record: object) -> dict[str, str | bool]:
 
 
 def build_access_metadata(record: object) -> dict[str, str | int]:
-    """Keep database ownership fields available to Chroma filters."""
+    """Keep database ownership fields available to vector filters."""
     owner_user_id = getattr(record, "owner_user_id", None)
     return {
         "knowledge_base_id": str(
             getattr(record, "knowledge_base_id", "global") or "global"
         ),
         "visibility": str(getattr(record, "visibility", "public") or "public"),
-        # Chroma metadata cannot store None, so 0 represents a public record.
+        # 0 represents a public record without an owner.
         "owner_user_id": int(owner_user_id or 0),
     }
 
@@ -123,6 +214,7 @@ def build_knowledge_documents(session: Session) -> list[Document]:
                     "type": "condition",
                     "record_id": condition.id,
                     "name": condition.name,
+                    "page_number": 0,
                     **build_source_metadata(condition),
                     **build_access_metadata(condition),
                 },
@@ -146,6 +238,7 @@ def build_knowledge_documents(session: Session) -> list[Document]:
                     "type": "drug",
                     "record_id": drug.id,
                     "name": drug.name,
+                    "page_number": 0,
                     **build_source_metadata(drug),
                     **build_access_metadata(drug),
                 },
@@ -202,6 +295,7 @@ def get_knowledge_status(session: Session) -> dict:
     if (
         isinstance(cached_status, dict)
         and "is_current" in cached_status
+        and cached_status.get("vector_store_type") == VECTOR_STORE_TYPE
         and all(
             cached_status.get(key) == value
             for key, value in processing_config.items()
@@ -212,6 +306,7 @@ def get_knowledge_status(session: Session) -> dict:
     documents = build_knowledge_documents(session)
     current_hash = get_knowledge_fingerprint(documents)
     index_state = session.get(KnowledgeIndexState, 1)
+    vector_count = get_milvus_vector_count()
     source_document_count = sum(
         len(records)
         for records in (
@@ -225,12 +320,19 @@ def get_knowledge_status(session: Session) -> dict:
         "is_current": (
             index_state is not None
             and index_state.content_hash == current_hash
+            and index_state.vector_store_type == VECTOR_STORE_TYPE
+            and (
+                vector_count is None
+                or vector_count == len(documents)
+            )
         ),
         "document_count": source_document_count,
         "chunk_count": len(documents),
         "indexed_document_count": (
             index_state.document_count if index_state is not None else None
         ),
+        "vector_store_type": VECTOR_STORE_TYPE,
+        "vector_count": vector_count,
         "indexed_at": index_state.indexed_at if index_state is not None else None,
         **processing_config,
     }
@@ -266,6 +368,8 @@ def rebuild_vector_store(session: Session) -> tuple[int, int]:
         id=1,
         content_hash=get_knowledge_fingerprint(documents),
         document_count=len(documents),
+        vector_store_type=VECTOR_STORE_TYPE,
+        vector_count=len(documents),
     )
     session.merge(index_state)
     session.commit()

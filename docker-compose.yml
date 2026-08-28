@@ -1,6 +1,50 @@
 name: medical-health-assistant
 
 services:
+  etcd:
+    image: quay.io/coreos/etcd:v3.5.5
+    environment:
+      ETCD_AUTO_COMPACTION_MODE: revision
+      ETCD_AUTO_COMPACTION_RETENTION: "1000"
+      ETCD_QUOTA_BACKEND_BYTES: "4294967296"
+      ETCD_SNAPSHOT_COUNT: "50000"
+    command: >-
+      etcd
+      --advertise-client-urls=http://etcd:2379
+      --listen-client-urls=http://0.0.0.0:2379
+      --data-dir=/etcd
+    volumes:
+      - medical_health_etcd:/etcd
+    restart: unless-stopped
+
+  minio:
+    image: minio/minio:RELEASE.2024-02-26T09-33-48Z
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+    command: minio server /minio_data --console-address ":9001"
+    volumes:
+      - medical_health_minio:/minio_data
+    restart: unless-stopped
+
+  milvus:
+    image: milvusdb/milvus:v2.4.15
+    command: ["milvus", "run", "standalone"]
+    environment:
+      ETCD_ENDPOINTS: etcd:2379
+      MINIO_ADDRESS: minio:9000
+    volumes:
+      - medical_health_milvus:/var/lib/milvus
+    ports:
+      - "19530:19530"
+      - "9091:9091"
+    depends_on:
+      etcd:
+        condition: service_started
+      minio:
+        condition: service_started
+    restart: unless-stopped
+
   mysql:
     image: mysql:8.4
     command:
@@ -47,7 +91,9 @@ services:
     environment:
       DATABASE_URL: ${DATABASE_URL:-mysql+pymysql://medical_user:medical_password@mysql:3306/medical_health?charset=utf8mb4}
       REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
-      CHROMA_DIR: /app/data/chroma_db
+      VECTOR_STORE_TYPE: ${VECTOR_STORE_TYPE:-milvus}
+      MILVUS_HOST: ${MILVUS_HOST:-milvus}
+      MILVUS_PORT: ${MILVUS_PORT:-19530}
       HTTP_PROXY: ${DOCKER_HTTP_PROXY:-http://host.docker.internal:23567}
       HTTPS_PROXY: ${DOCKER_HTTPS_PROXY:-http://host.docker.internal:23567}
       NO_PROXY: localhost,127.0.0.1
@@ -59,6 +105,8 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+      milvus:
+        condition: service_started
     healthcheck:
       test:
         ["CMD", "python", "-c", "from urllib.request import urlopen; urlopen('http://127.0.0.1:8003/health')"]
@@ -73,3 +121,6 @@ volumes:
     name: medical-health-assistant_medical_health_data
   medical_health_mysql:
   medical_health_redis:
+  medical_health_etcd:
+  medical_health_minio:
+  medical_health_milvus:

@@ -1,7 +1,7 @@
 """Keyword, vector, and hybrid retrieval for the RAG pipeline.
 
 The database search is intentionally small and explainable: MySQL finds
-explicit terms with LIKE, while Chroma finds semantically similar text. The
+explicit terms with LIKE, while Milvus finds semantically similar text. The
 two result sets are merged by the original knowledge record, so one record
 cannot occupy several answer slots just because it has several chunks.
 """
@@ -57,7 +57,7 @@ def build_vector_filter(
     source_filter: str,
     current_user: User | None = None,
 ) -> dict | None:
-    """Build the Chroma filter shared by vector and hybrid retrieval."""
+    """Build the vector filter shared by vector and hybrid retrieval."""
     conditions: list[dict] = []
     if knowledge_type != "all":
         conditions.append({"type": knowledge_type})
@@ -433,7 +433,7 @@ def hybrid_search(
     vector_fetch_count: int = 8,
     keyword_query: str | None = None,
 ) -> list[tuple[Document, float]]:
-    """Run MySQL and Chroma retrieval, then return one ranked list."""
+    """Run MySQL and Milvus retrieval, then return one ranked list."""
     vector_options: dict[str, object] = {"k": vector_fetch_count}
     vector_filter = build_vector_filter(
         knowledge_type,

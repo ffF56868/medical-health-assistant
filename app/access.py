@@ -31,7 +31,7 @@ def accessible_documents_statement(user: User):
 
 
 def build_vector_access_filter(user: User) -> dict | None:
-    """Build the Chroma filter for a regular user's public/private scope."""
+    """Build the vector filter for a regular user's public/private scope."""
     if user.is_admin:
         return None
     return {

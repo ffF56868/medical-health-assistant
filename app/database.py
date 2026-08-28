@@ -70,6 +70,12 @@ SQLITE_COLUMN_MIGRATIONS = {
     "knowledgerebuildjob": {
         "retry_of_job_id": "INTEGER",
     },
+    "knowledgeindexstate": {
+        # Existing Chroma index state must be rebuilt before it is considered
+        # a valid Milvus index.
+        "vector_store_type": "VARCHAR(30) NOT NULL DEFAULT ''",
+        "vector_count": "INTEGER NOT NULL DEFAULT 0",
+    },
     "user": {
         "is_admin": "BOOLEAN NOT NULL DEFAULT 0",
     },
