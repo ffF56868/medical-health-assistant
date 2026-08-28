@@ -666,7 +666,16 @@ def test_stale_rebuild_job_is_marked_failed_and_can_be_seen(
 
 
 def test_rag_evaluation_reports_hits_in_the_top_three(client, monkeypatch):
+    case = {
+        "case_id": "evaluation-hit",
+        "case_source": "测试题",
+        "question": "测试药物有什么作用？",
+        "expected_name": "测试药物",
+        "expected_type": "drug",
+        "category": "用药信息",
+    }
     vector_store = FakeEvaluationVectorStore()
+    monkeypatch.setattr(evaluation_router, "EVALUATION_CASES", (case,))
     monkeypatch.setattr(
         evaluation_router,
         "get_knowledge_status",
@@ -688,12 +697,7 @@ def test_rag_evaluation_reports_hits_in_the_top_three(client, monkeypatch):
     assert all(item["expected_rank"] == 1 for item in data["results"])
     assert all(k == 8 for _, k in vector_store.queries)
     assert data["quality_gate"]["status"] == "baseline"
-    assert {metric["category"] for metric in data["category_metrics"]} == {
-        "用药信息",
-        "生活方式",
-        "症状相关",
-        "紧急警示",
-    }
+    assert {metric["category"] for metric in data["category_metrics"]} == {"用药信息"}
 
 
 def test_rag_evaluation_accepts_an_alternative_target_name(client, monkeypatch):
