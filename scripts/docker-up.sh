@@ -1,11 +1,13 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# WSL often exposes a local proxy as 127.0.0.1:PORT. Containers must use
-# host.docker.internal instead, so derive the current port at startup.
+# WSL exposes the proxy at 127.0.0.1, while Docker build containers reach the
+# Windows host through host.docker.internal. Read the port each time so a proxy
+# port change does not leave Docker using a stale address.
 proxy_url="${HTTPS_PROXY:-${https_proxy:-${HTTP_PROXY:-${http_proxy:-}}}}"
 if [[ "$proxy_url" =~ :([0-9]+)$ ]]; then
-  docker_proxy="http://host.docker.internal:${BASH_REMATCH[1]}"
+  proxy_port="${BASH_REMATCH[1]}"
+  docker_proxy="http://host.docker.internal:${proxy_port}"
   export DOCKER_HTTP_PROXY="$docker_proxy"
   export DOCKER_HTTPS_PROXY="$docker_proxy"
 fi

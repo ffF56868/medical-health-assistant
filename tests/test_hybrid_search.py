@@ -17,6 +17,15 @@ def test_extract_keyword_terms_keeps_a_chinese_medical_name():
     assert "什么" not in terms
 
 
+def test_extract_keyword_terms_ignores_generic_specialty_overview_title_parts():
+    terms = extract_keyword_terms("眼科常见病概览中有哪些就医警示？")
+
+    assert "眼科" in terms
+    assert "专科概览" not in terms
+    assert "科概览" not in terms
+    assert "就医警示" not in terms
+
+
 def test_keyword_search_respects_type_and_private_document_access(test_engine):
     with Session(test_engine) as session:
         session.add(

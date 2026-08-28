@@ -81,8 +81,8 @@ services:
     build:
       context: .
       args:
-        HTTP_PROXY: ${DOCKER_HTTP_PROXY:-http://host.docker.internal:23567}
-        HTTPS_PROXY: ${DOCKER_HTTPS_PROXY:-http://host.docker.internal:23567}
+        HTTP_PROXY: ${DOCKER_HTTP_PROXY:-}
+        HTTPS_PROXY: ${DOCKER_HTTPS_PROXY:-}
         NO_PROXY: localhost,127.0.0.1
     ports:
       - "8003:8003"
@@ -94,8 +94,8 @@ services:
       VECTOR_STORE_TYPE: ${VECTOR_STORE_TYPE:-milvus}
       MILVUS_HOST: ${MILVUS_HOST:-milvus}
       MILVUS_PORT: ${MILVUS_PORT:-19530}
-      HTTP_PROXY: ${DOCKER_HTTP_PROXY:-http://host.docker.internal:23567}
-      HTTPS_PROXY: ${DOCKER_HTTPS_PROXY:-http://host.docker.internal:23567}
+      HTTP_PROXY: ${DOCKER_HTTP_PROXY:-}
+      HTTPS_PROXY: ${DOCKER_HTTPS_PROXY:-}
       NO_PROXY: localhost,127.0.0.1
     volumes:
       - medical_health_data:/app/data

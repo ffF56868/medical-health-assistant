@@ -728,6 +728,14 @@ def test_rag_evaluation_accepts_an_alternative_target_name(client, monkeypatch):
         lambda session: {"is_current": True},
     )
     monkeypatch.setattr(evaluation_router, "get_vector_store", lambda: vector_store)
+    monkeypatch.setattr(
+        evaluation_router,
+        "hybrid_search",
+        lambda _session, store, question, **kwargs: store.similarity_search_with_relevance_scores(
+            question,
+            k=kwargs["vector_fetch_count"],
+        ),
+    )
 
     response = client.post("/evaluation/run")
 
@@ -888,6 +896,14 @@ def test_rag_evaluation_flags_a_lower_rank_without_calling_it_a_failure(
             0.9,
         ),
     ]
+    monkeypatch.setattr(
+        evaluation_router,
+        "hybrid_search",
+        lambda _session, store, question, **kwargs: store.similarity_search_with_relevance_scores(
+            question,
+            k=kwargs["vector_fetch_count"],
+        ),
+    )
     response = client.post("/evaluation/run")
 
     assert response.status_code == 200
@@ -949,6 +965,14 @@ def test_retrieval_comparison_reports_deduplication_improvement(client, monkeypa
         "get_vector_store",
         lambda: vector_store,
     )
+    monkeypatch.setattr(
+        evaluation_router,
+        "hybrid_search",
+        lambda _session, store, question, **kwargs: store.similarity_search_with_relevance_scores(
+            question,
+            k=kwargs["vector_fetch_count"],
+        ),
+    )
 
     response = client.post("/evaluation/compare")
 
@@ -1001,6 +1025,14 @@ def test_retrieval_diagnosis_explains_a_lower_rank_target(client, monkeypatch):
         evaluation_router,
         "get_vector_store",
         lambda: vector_store,
+    )
+    monkeypatch.setattr(
+        evaluation_router,
+        "hybrid_search",
+        lambda _session, store, question, **kwargs: store.similarity_search_with_relevance_scores(
+            question,
+            k=kwargs["vector_fetch_count"],
+        ),
     )
 
     response = client.post("/evaluation/diagnose")

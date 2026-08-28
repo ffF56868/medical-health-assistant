@@ -38,27 +38,45 @@ RERANK_STOP_WORDS = {
     "还有",
 }
 
+# These title fragments identify a document format rather than a medical
+# topic, so they should not elevate every specialty overview during reranking.
+GENERIC_TITLE_PHRASES = (
+    "专科概览",
+    "常见病概览",
+    "健康教育",
+    "就医警示",
+)
+
 
 def _normalize_text(value: object) -> str:
     return re.sub(r"\s+", "", str(value or "").casefold())
 
 
+def _is_generic_title_fragment(term: str) -> bool:
+    return any(term in phrase for phrase in GENERIC_TITLE_PHRASES)
+
+
 def _extract_terms(query: str) -> list[str]:
     normalized_query = _normalize_text(query)
+    for phrase in GENERIC_TITLE_PHRASES:
+        normalized_query = normalized_query.replace(phrase, "")
     terms: set[str] = set()
     for token in re.findall(
         r"[a-z0-9][a-z0-9_+.-]*|[\u4e00-\u9fff]+",
         normalized_query,
     ):
-        if token in RERANK_STOP_WORDS:
+        if token in RERANK_STOP_WORDS or _is_generic_title_fragment(token):
             continue
         if re.fullmatch(r"[\u4e00-\u9fff]+", token):
-            if len(token) >= 2:
+            if len(token) >= 2 and not _is_generic_title_fragment(token):
                 terms.add(token)
             for size in range(2, min(6, len(token)) + 1):
                 for start in range(0, len(token) - size + 1):
                     term = token[start : start + size]
-                    if term not in RERANK_STOP_WORDS:
+                    if (
+                        term not in RERANK_STOP_WORDS
+                        and not _is_generic_title_fragment(term)
+                    ):
                         terms.add(term)
         elif len(token) >= 2 or token.isdigit():
             terms.add(token)

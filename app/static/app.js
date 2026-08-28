@@ -82,10 +82,14 @@ const diagnoseRetrievalButton = document.querySelector("#diagnose-retrieval");
 const evaluationStatus = document.querySelector("#evaluation-status");
 const evaluationMetrics = document.querySelector("#evaluation-metrics");
 const evaluationResults = document.querySelector("#evaluation-results");
+const evaluationResultsDetails = document.querySelector("#evaluation-results-details");
+const evaluationResultsSummary = document.querySelector("#evaluation-results-summary");
 const evaluationQualityGate = document.querySelector("#evaluation-quality-gate");
 const qualityEvaluationStatus = document.querySelector("#quality-evaluation-status");
 const qualityEvaluationMetrics = document.querySelector("#quality-evaluation-metrics");
 const qualityEvaluationResults = document.querySelector("#quality-evaluation-results");
+const qualityEvaluationResultsDetails = document.querySelector("#quality-evaluation-results-details");
+const qualityEvaluationResultsSummary = document.querySelector("#quality-evaluation-results-summary");
 const refreshEvaluationHistoryButton = document.querySelector("#refresh-evaluation-history");
 const evaluationHistoryStatus = document.querySelector("#evaluation-history-status");
 const evaluationHistoryList = document.querySelector("#evaluation-history-list");
@@ -100,12 +104,18 @@ const customEvaluationCategory = document.querySelector("#evaluation-category");
 const customEvaluationExpectedType = document.querySelector("#evaluation-expected-type");
 const customEvaluationStatus = document.querySelector("#custom-evaluation-status");
 const customEvaluationList = document.querySelector("#custom-evaluation-list");
+const customEvaluationDetails = document.querySelector("#custom-evaluation-details");
+const customEvaluationSummary = document.querySelector("#custom-evaluation-summary");
 const comparisonStatus = document.querySelector("#comparison-status");
 const comparisonMetrics = document.querySelector("#comparison-metrics");
 const comparisonResults = document.querySelector("#comparison-results");
+const comparisonResultsDetails = document.querySelector("#comparison-results-details");
+const comparisonResultsSummary = document.querySelector("#comparison-results-summary");
 const diagnosisStatus = document.querySelector("#diagnosis-status");
 const diagnosisMetrics = document.querySelector("#diagnosis-metrics");
 const diagnosisResults = document.querySelector("#diagnosis-results");
+const diagnosisResultsDetails = document.querySelector("#diagnosis-results-details");
+const diagnosisResultsSummary = document.querySelector("#diagnosis-results-summary");
 
 let rebuildPolling = false;
 
@@ -1059,18 +1069,38 @@ async function loadFeedbackDashboard() {
   }
 }
 
+function resetCollapsibleResults(details, summary, label, count) {
+  details.open = false;
+  summary.textContent = `${label}（${count} 道）`;
+}
+
 function renderRagEvaluation(data) {
   evaluationMetrics.innerHTML = "";
+  resetCollapsibleResults(
+    evaluationResultsDetails,
+    evaluationResultsSummary,
+    "本次检索评测明细",
+    data.total_count,
+  );
+  const retrieval = data.retrieval_metrics;
   const metrics = [
     ["通过", `${data.passed_count} / ${data.total_count}`],
-    ["命中率", `${Math.round(data.pass_rate * 100)}%`],
+    ["Top1 准确率", `${formatRate(retrieval.top1_accuracy)} (${retrieval.top1_correct_count}/${data.total_count})`],
+    ["召回率 Recall@3", `${formatRate(retrieval.recall_at_3)} (${retrieval.recalled_count}/${data.total_count})`],
+    ["精确率 Precision@3", `${formatRate(retrieval.precision_at_3)} (${retrieval.relevant_result_count}/${retrieval.retrieved_result_count})`],
     ["默认题", data.preset_count],
     ["自定义题", data.custom_count],
   ];
+  const metricHints = {
+    "Top1 准确率": "目标资料排在第 1 条的题目比例。",
+    "召回率 Recall@3": "目标资料进入前 3 条有效检索结果的题目比例。",
+    "精确率 Precision@3": "所有有效前 3 条结果中，目标资料所占的比例。",
+  };
   for (const [label, value] of metrics) {
     const metric = document.createElement("div");
     metric.className = "evaluation-metric";
     metric.textContent = `${label}：${value}`;
+    if (metricHints[label]) metric.title = metricHints[label];
     evaluationMetrics.append(metric);
   }
   for (const metricData of data.category_metrics) {
@@ -1088,17 +1118,18 @@ function renderRagEvaluation(data) {
     title.textContent = result.question;
     const detail = document.createElement("p");
     const expectedType = getKnowledgeTypeLabel(result.expected_type);
+    const relevance = `有效结果 ${result.retrieved_count} 条，其中目标资料 ${result.relevant_count} 条`;
     if (result.passed) {
       const matchedName = result.matched_name || result.expected_name;
       const isAlternativeMatch = matchedName !== result.expected_name;
       detail.textContent = isAlternativeMatch
-        ? `通过：可接受${expectedType}“${matchedName}”命中第 ${result.expected_rank} 条；主目标是“${result.expected_name}”。`
-        : `通过：目标${expectedType}“${matchedName}”命中第 ${result.expected_rank} 条。`;
+        ? `通过：可接受${expectedType}“${matchedName}”命中第 ${result.expected_rank} 条；主目标是“${result.expected_name}”。${relevance}。`
+        : `通过：目标${expectedType}“${matchedName}”命中第 ${result.expected_rank} 条。${relevance}。`;
     } else {
       const topResult = result.top_name
         ? `首位结果是${getKnowledgeTypeLabel(result.top_type)}“${result.top_name}”`
         : "没有检索到结果";
-      detail.textContent = `未通过：目标${expectedType}“${result.expected_name}”未进入前 3 条；${topResult}。`;
+      detail.textContent = `未通过：目标${expectedType}“${result.expected_name}”未进入前 3 条；${topResult}。${relevance}。`;
     }
     item.append(title, detail);
     evaluationResults.append(item);
@@ -1189,6 +1220,12 @@ async function loadMonitoring() {
 function renderQualityEvaluation(data) {
   const metrics = data.metrics;
   qualityEvaluationMetrics.innerHTML = "";
+  resetCollapsibleResults(
+    qualityEvaluationResultsDetails,
+    qualityEvaluationResultsSummary,
+    "答案质量评测明细",
+    data.total_count,
+  );
   const metricItems = [
     ["答案正确率", `${Math.round(metrics.answer_accuracy * 100)}% (${metrics.answer_correct_count}/${metrics.total_count})`],
     ["引用正确率", `${Math.round(metrics.citation_accuracy * 100)}% (${metrics.citation_correct_count}/${metrics.total_count})`],
@@ -1291,9 +1328,18 @@ function getStrategyResultText(result, expectedName) {
 
 function renderRetrievalComparison(data) {
   comparisonMetrics.innerHTML = "";
+  resetCollapsibleResults(
+    comparisonResultsDetails,
+    comparisonResultsSummary,
+    "新旧检索对比明细",
+    data.total_count,
+  );
   const metrics = [
     ["旧策略", `${data.baseline.passed_count} / ${data.total_count} (${Math.round(data.baseline.pass_rate * 100)}%)`],
     ["新策略", `${data.current.passed_count} / ${data.total_count} (${Math.round(data.current.pass_rate * 100)}%)`],
+    ["Top1 准确率（旧 -> 新）", `${formatRate(data.baseline.metrics.top1_accuracy)} -> ${formatRate(data.current.metrics.top1_accuracy)}`],
+    ["召回率 Recall@3（旧 -> 新）", `${formatRate(data.baseline.metrics.recall_at_3)} -> ${formatRate(data.current.metrics.recall_at_3)}`],
+    ["精确率 Precision@3（旧 -> 新）", `${formatRate(data.baseline.metrics.precision_at_3)} -> ${formatRate(data.current.metrics.precision_at_3)}`],
     ["命中率变化", `${data.pass_rate_delta >= 0 ? "+" : ""}${Math.round(data.pass_rate_delta * 100)}%`],
     ["提升题目", data.improved_count],
     ["回退题目", data.regressed_count],
@@ -1325,6 +1371,12 @@ function renderRetrievalComparison(data) {
 
 function renderRetrievalDiagnosis(data) {
   diagnosisMetrics.innerHTML = "";
+  resetCollapsibleResults(
+    diagnosisResultsDetails,
+    diagnosisResultsSummary,
+    "检索诊断明细",
+    data.total_count,
+  );
   const metrics = [
     ["表现正常", data.healthy_count],
     ["可优化", data.attention_count],
@@ -1360,6 +1412,12 @@ function renderRetrievalDiagnosis(data) {
 
 function renderCustomEvaluationCases(data) {
   customEvaluationList.innerHTML = "";
+  resetCollapsibleResults(
+    customEvaluationDetails,
+    customEvaluationSummary,
+    "已保存的自定义评测题",
+    data.total_count,
+  );
   if (data.cases.length === 0) {
     customEvaluationStatus.textContent = "还没有自定义题。可从你最常问、最希望检索正确的问题开始添加。";
     return;

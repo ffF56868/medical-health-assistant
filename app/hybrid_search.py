@@ -45,6 +45,15 @@ SEARCH_STOP_WORDS = {
     "还有",
 }
 
+# These phrases occur in many document titles. They describe a document's
+# format, not the medical topic the user is looking for.
+GENERIC_TITLE_PHRASES = (
+    "专科概览",
+    "常见病概览",
+    "健康教育",
+    "就医警示",
+)
+
 
 @dataclass
 class KeywordMatch:
@@ -88,6 +97,10 @@ def _normalize_text(value: str) -> str:
     return re.sub(r"\s+", "", value.casefold())
 
 
+def _is_generic_title_fragment(term: str) -> bool:
+    return any(term in phrase for phrase in GENERIC_TITLE_PHRASES)
+
+
 def extract_keyword_terms(query: str) -> list[str]:
     """Extract useful terms from both spaced and unspaced Chinese questions.
 
@@ -97,21 +110,30 @@ def extract_keyword_terms(query: str) -> list[str]:
     built, which keeps ranking focused on medical terms.
     """
     normalized_query = _normalize_text(query)
+    for phrase in GENERIC_TITLE_PHRASES:
+        normalized_query = normalized_query.replace(phrase, "")
     if not normalized_query:
         return []
 
     terms: set[str] = set()
     for token in re.findall(r"[a-z0-9][a-z0-9_+-]*|[\u4e00-\u9fff]+", normalized_query):
-        if token in SEARCH_STOP_WORDS:
+        if token in SEARCH_STOP_WORDS or _is_generic_title_fragment(token):
             continue
         if re.fullmatch(r"[\u4e00-\u9fff]+", token):
-            if len(token) >= 2 and token not in SEARCH_STOP_WORDS:
+            if (
+                len(token) >= 2
+                and token not in SEARCH_STOP_WORDS
+                and not _is_generic_title_fragment(token)
+            ):
                 terms.add(token)
             if len(token) <= 30:
                 for size in range(2, min(8, len(token)) + 1):
                     for start in range(0, len(token) - size + 1):
                         ngram = token[start : start + size]
-                        if ngram not in SEARCH_STOP_WORDS:
+                        if (
+                            ngram not in SEARCH_STOP_WORDS
+                            and not _is_generic_title_fragment(ngram)
+                        ):
                             terms.add(ngram)
         elif len(token) >= 2 or token.isdigit():
             terms.add(token)

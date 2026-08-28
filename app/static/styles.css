@@ -398,6 +398,14 @@ h2 { font-size: 20px; margin: 0; }
 
 .custom-evaluation-status { color: #526166; font-size: 13px; min-height: 20px; margin: 11px 0 0; }
 
+.collapsible-list { border-top: 1px solid #dce4e5; margin-top: 12px; }
+
+.collapsible-list summary { color: #315b5d; cursor: pointer; font-size: 13px; font-weight: 700; padding: 10px 0; user-select: none; }
+
+.collapsible-list[open] summary { border-bottom: 1px solid #e3ebea; }
+
+.collapsible-list summary::marker { color: #3b7475; }
+
 .custom-evaluation-list { display: grid; gap: 7px; margin-top: 8px; }
 
 .custom-evaluation-item { align-items: center; background: #f6f9f8; border: 1px solid #dce4e5; display: flex; gap: 12px; justify-content: space-between; padding: 8px 10px; }

@@ -123,12 +123,13 @@ def get_vector_store() -> MilvusVectorStore:
     embeddings = OpenAIEmbeddings(
         model=os.getenv("EMBEDDING_MODEL", "text-embedding-3-small")
     )
+    milvus_host = os.getenv("MILVUS_HOST", "milvus")
+    milvus_port = os.getenv("MILVUS_PORT", "19530")
     return MilvusVectorStore(
         embedding_function=embeddings,
         collection_name=COLLECTION_NAME,
         connection_args={
-            "host": os.getenv("MILVUS_HOST", "milvus"),
-            "port": os.getenv("MILVUS_PORT", "19530"),
+            "uri": f"http://{milvus_host}:{milvus_port}",
         },
         index_params={
             "index_type": "AUTOINDEX",
@@ -363,6 +364,8 @@ def rebuild_vector_store(session: Session) -> tuple[int, int]:
             for document in documents
         ]
         vector_store.add_documents(documents=documents, ids=ids)
+        # Milvus reports a row count only after pending inserts are flushed.
+        vector_store.client.flush(COLLECTION_NAME)
 
     index_state = KnowledgeIndexState(
         id=1,

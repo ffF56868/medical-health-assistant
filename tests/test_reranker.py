@@ -33,3 +33,21 @@ def test_reranker_preserves_original_order_when_question_has_no_terms():
 
     assert [match[0].metadata["name"] for match in matches] == ["资料二", "资料一"]
     assert matches[0][1] == 0.8
+
+
+def test_reranker_does_not_boost_every_specialty_overview_for_a_generic_title():
+    irrelevant = Document(
+        page_content="资料标题：骨科常见病概览\n资料内容：外伤和关节问题。",
+        metadata={"name": "骨科常见病概览"},
+    )
+    relevant = Document(
+        page_content="资料标题：皮肤科常见病概览\n资料内容：反复皮疹、瘙痒、水疱。",
+        metadata={"name": "皮肤科常见病概览"},
+    )
+
+    matches = rerank_matches(
+        "反复皮疹、瘙痒、水疱应看哪个专科概览？",
+        [(irrelevant, 1.0), (relevant, 0.82)],
+    )
+
+    assert matches[0][0].metadata["name"] == "皮肤科常见病概览"

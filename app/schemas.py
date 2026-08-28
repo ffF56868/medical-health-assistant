@@ -463,6 +463,8 @@ class RAGEvaluationCaseResult(SQLModel):
     top_name: str | None = None
     top_type: str | None = None
     top_score: float | None = None
+    retrieved_count: int = 0
+    relevant_count: int = 0
 
 
 class RetrievalStrategyResult(SQLModel):
@@ -472,6 +474,18 @@ class RetrievalStrategyResult(SQLModel):
     top_name: str | None = None
     top_type: str | None = None
     top_score: float | None = None
+    retrieved_count: int = 0
+    relevant_count: int = 0
+
+
+class RetrievalEvaluationMetrics(SQLModel):
+    top1_correct_count: int
+    top1_accuracy: float
+    recalled_count: int
+    recall_at_3: float
+    relevant_result_count: int
+    retrieved_result_count: int
+    precision_at_3: float
 
 
 class RetrievalComparisonCaseResult(SQLModel):
@@ -490,6 +504,7 @@ class RetrievalComparisonCaseResult(SQLModel):
 class RetrievalStrategySummary(SQLModel):
     passed_count: int
     pass_rate: float
+    metrics: RetrievalEvaluationMetrics
 
 
 class RetrievalComparisonResponse(SQLModel):
@@ -562,6 +577,7 @@ class RAGEvaluationResponse(SQLModel):
     pass_rate: float
     preset_count: int
     custom_count: int
+    retrieval_metrics: RetrievalEvaluationMetrics
     category_metrics: list[RAGEvaluationCategoryMetric] = Field(default_factory=list)
     quality_gate: RAGEvaluationQualityGate
     results: list[RAGEvaluationCaseResult] = Field(default_factory=list)

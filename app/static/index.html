@@ -302,28 +302,46 @@
               <button type="submit">添加自定义题</button>
             </form>
             <p class="custom-evaluation-status" id="custom-evaluation-status" aria-live="polite"></p>
-            <div class="custom-evaluation-list" id="custom-evaluation-list"></div>
+            <details class="collapsible-list" id="custom-evaluation-details">
+              <summary id="custom-evaluation-summary">已保存的自定义评测题</summary>
+              <div class="custom-evaluation-list" id="custom-evaluation-list"></div>
+            </details>
             <p class="evaluation-status" id="evaluation-status" aria-live="polite"></p>
-            <div class="evaluation-metrics" id="evaluation-metrics"></div>
-            <div class="evaluation-results" id="evaluation-results"></div>
+            <section class="retrieval-metrics-panel" aria-labelledby="retrieval-metrics-title">
+              <h4 id="retrieval-metrics-title">检索指标</h4>
+              <div class="evaluation-metrics" id="evaluation-metrics"></div>
+            </section>
+            <details class="collapsible-list" id="evaluation-results-details">
+              <summary id="evaluation-results-summary">本次检索评测明细</summary>
+              <div class="evaluation-results" id="evaluation-results"></div>
+            </details>
             <div class="evaluation-quality-gate" id="evaluation-quality-gate"></div>
             <section class="quality-evaluation" aria-labelledby="quality-evaluation-title">
               <h4 id="quality-evaluation-title">答案、引用与拒答评估</h4>
               <p class="quality-evaluation-status" id="quality-evaluation-status" aria-live="polite"></p>
               <div class="quality-evaluation-metrics" id="quality-evaluation-metrics"></div>
-              <div class="quality-evaluation-results" id="quality-evaluation-results"></div>
+              <details class="collapsible-list" id="quality-evaluation-results-details">
+                <summary id="quality-evaluation-results-summary">答案质量评测明细</summary>
+                <div class="quality-evaluation-results" id="quality-evaluation-results"></div>
+              </details>
             </section>
             <section class="retrieval-comparison" aria-labelledby="retrieval-comparison-title">
               <h4 id="retrieval-comparison-title">新旧检索结果</h4>
               <p class="comparison-status" id="comparison-status" aria-live="polite"></p>
               <div class="comparison-metrics" id="comparison-metrics"></div>
-              <div class="comparison-results" id="comparison-results"></div>
+              <details class="collapsible-list" id="comparison-results-details">
+                <summary id="comparison-results-summary">新旧检索对比明细</summary>
+                <div class="comparison-results" id="comparison-results"></div>
+              </details>
             </section>
             <section class="retrieval-diagnosis" aria-labelledby="retrieval-diagnosis-title">
               <h4 id="retrieval-diagnosis-title">检索诊断</h4>
               <p class="diagnosis-status" id="diagnosis-status" aria-live="polite"></p>
               <div class="diagnosis-metrics" id="diagnosis-metrics"></div>
-              <div class="diagnosis-results" id="diagnosis-results"></div>
+              <details class="collapsible-list" id="diagnosis-results-details">
+                <summary id="diagnosis-results-summary">检索诊断明细</summary>
+                <div class="diagnosis-results" id="diagnosis-results"></div>
+              </details>
             </section>
             <section class="evaluation-history" aria-labelledby="evaluation-history-title">
               <div class="evaluation-history-heading">
@@ -441,6 +459,6 @@
         <p class="account-status" id="account-logged-in-status" aria-live="polite"></p>
       </section>
     </dialog>
-    <script src="/static/app.js"></script>
+    <script src="/static/app.js?v=20260828-retrieval-metrics"></script>
   </body>
 </html>
