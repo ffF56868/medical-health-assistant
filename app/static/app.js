@@ -77,6 +77,7 @@ const rebuildHistoryResults = document.querySelector("#rebuild-history-results")
 const refreshRebuildHistoryButton = document.querySelector("#refresh-rebuild-history");
 const runRagEvaluationButton = document.querySelector("#run-rag-evaluation");
 const runQualityEvaluationButton = document.querySelector("#run-quality-evaluation");
+const runRagasEvaluationButton = document.querySelector("#run-ragas-evaluation");
 const compareRetrievalButton = document.querySelector("#compare-retrieval");
 const diagnoseRetrievalButton = document.querySelector("#diagnose-retrieval");
 const evaluationStatus = document.querySelector("#evaluation-status");
@@ -85,6 +86,11 @@ const evaluationResults = document.querySelector("#evaluation-results");
 const evaluationResultsDetails = document.querySelector("#evaluation-results-details");
 const evaluationResultsSummary = document.querySelector("#evaluation-results-summary");
 const evaluationQualityGate = document.querySelector("#evaluation-quality-gate");
+const ragasEvaluationStatus = document.querySelector("#ragas-evaluation-status");
+const ragasEvaluationMetrics = document.querySelector("#ragas-evaluation-metrics");
+const ragasEvaluationResults = document.querySelector("#ragas-evaluation-results");
+const ragasEvaluationResultsDetails = document.querySelector("#ragas-evaluation-results-details");
+const ragasEvaluationResultsSummary = document.querySelector("#ragas-evaluation-results-summary");
 const qualityEvaluationStatus = document.querySelector("#quality-evaluation-status");
 const qualityEvaluationMetrics = document.querySelector("#quality-evaluation-metrics");
 const qualityEvaluationResults = document.querySelector("#quality-evaluation-results");
@@ -118,6 +124,7 @@ const diagnosisResultsDetails = document.querySelector("#diagnosis-results-detai
 const diagnosisResultsSummary = document.querySelector("#diagnosis-results-summary");
 
 let rebuildPolling = false;
+let ragasEvaluationPollingTimer = null;
 
 const SOURCE_TIER_OPTIONS = [
   ["authority", "权威机构"],
@@ -968,6 +975,10 @@ function setFeedbackDashboardVisible(visible) {
     loadMonitoring();
     loadCustomEvaluationCases();
     loadEvaluationHistory();
+    loadLatestRagasEvaluation();
+  } else if (ragasEvaluationPollingTimer) {
+    window.clearTimeout(ragasEvaluationPollingTimer);
+    ragasEvaluationPollingTimer = null;
   }
 }
 
@@ -1141,6 +1152,172 @@ function formatRate(value) {
   return value === null || value === undefined
     ? "暂无"
     : `${Math.round(value * 100)}%`;
+}
+
+function formatRagasScore(value) {
+  return value === null || value === undefined
+    ? "无法计算"
+    : value.toFixed(3);
+}
+
+function getRagasStatusLabel(status) {
+  return ({
+    pending: "等待执行",
+    running: "正在评测",
+    completed: "已完成",
+    failed: "执行失败",
+  })[status] || "未知状态";
+}
+
+function renderRagasEvaluation(run) {
+  ragasEvaluationMetrics.innerHTML = "";
+  ragasEvaluationResults.innerHTML = "";
+  if (!run) {
+    ragasEvaluationStatus.className = "ragas-evaluation-status";
+    ragasEvaluationStatus.textContent = "尚无 RAGAS 评测记录。默认会随机抽样 10 道已保存的评测题。";
+    resetCollapsibleResults(
+      ragasEvaluationResultsDetails,
+      ragasEvaluationResultsSummary,
+      "RAGAS 逐题结果",
+      0,
+    );
+    return;
+  }
+
+  const active = ["pending", "running"].includes(run.status);
+  ragasEvaluationStatus.className = `ragas-evaluation-status ${run.status}`;
+  const createdAt = formatEvaluationTime(run.created_at);
+  ragasEvaluationStatus.textContent = active
+    ? `任务 #${run.id} ${getRagasStatusLabel(run.status)}：已完成问答 ${run.completed_count} / ${run.total_count || run.sample_size} 道。`
+    : `任务 #${run.id} ${getRagasStatusLabel(run.status)}，创建于 ${createdAt}。`;
+  if (run.error_message) {
+    ragasEvaluationStatus.textContent += ` 错误：${run.error_message}`;
+  }
+
+  const metrics = run.metrics || {};
+  const metricItems = [
+    ["抽样题数", `${run.total_count || run.sample_size} 道`],
+    ["Faithfulness", formatRagasScore(metrics.faithfulness)],
+    ["Answer Relevancy", formatRagasScore(metrics.answer_relevancy)],
+    ["Context Precision", formatRagasScore(metrics.context_precision)],
+    ["Context Recall", formatRagasScore(metrics.context_recall)],
+  ];
+  for (const [label, value] of metricItems) {
+    const metric = document.createElement("div");
+    metric.className = "evaluation-metric";
+    metric.textContent = `${label}：${value}`;
+    ragasEvaluationMetrics.append(metric);
+  }
+
+  resetCollapsibleResults(
+    ragasEvaluationResultsDetails,
+    ragasEvaluationResultsSummary,
+    "RAGAS 逐题结果",
+    run.results.length,
+  );
+  for (const result of run.results) {
+    const item = document.createElement("article");
+    item.className = "ragas-evaluation-result";
+    const title = document.createElement("h5");
+    title.textContent = result.question;
+    const detail = document.createElement("p");
+    detail.textContent = `目标：${getKnowledgeTypeLabel(result.expected_type)}“${result.expected_name}”｜路径：${result.processing_path}｜有效上下文：${result.retrieved_count} 条`;
+    const score = document.createElement("p");
+    score.className = "ragas-score-line";
+    score.textContent = `Faithfulness ${formatRagasScore(result.faithfulness)}｜Answer Relevancy ${formatRagasScore(result.answer_relevancy)}｜Context Precision ${formatRagasScore(result.context_precision)}｜Context Recall ${formatRagasScore(result.context_recall)}`;
+    const context = document.createElement("p");
+    context.className = "ragas-context-line";
+    context.textContent = result.context_titles.length
+      ? `检索资料：${result.context_titles.join("、")}`
+      : "检索资料：无";
+    const answer = document.createElement("p");
+    answer.className = "ragas-answer";
+    answer.textContent = `回答：${result.answer}`;
+    item.append(title, detail, score, context, answer);
+    if (!result.reference_available) {
+      const warning = document.createElement("p");
+      warning.className = "ragas-warning";
+      warning.textContent = "目标参考资料已不存在，Context Precision/Recall 的参考答案已降级为资料名称。";
+      item.append(warning);
+    }
+    if (result.error_message) {
+      const error = document.createElement("p");
+      error.className = "ragas-warning";
+      error.textContent = `评分异常：${result.error_message}`;
+      item.append(error);
+    }
+    ragasEvaluationResults.append(item);
+  }
+}
+
+async function loadLatestRagasEvaluation() {
+  try {
+    const response = await apiFetch("/evaluation/ragas/tasks?limit=1");
+    const data = await response.json();
+    if (!response.ok) throw new Error(getErrorMessage(data, "读取 RAGAS 任务失败。"));
+    const run = data.runs[0] || null;
+    renderRagasEvaluation(run);
+    if (run && ["pending", "running"].includes(run.status)) {
+      runRagasEvaluationButton.disabled = true;
+      runRagasEvaluationButton.textContent = "RAGAS 评测中...";
+      watchRagasEvaluation(run.id);
+    }
+  } catch (error) {
+    ragasEvaluationStatus.className = "ragas-evaluation-status error";
+    ragasEvaluationStatus.textContent = `读取 RAGAS 任务失败：${error.message}`;
+  }
+}
+
+async function watchRagasEvaluation(runId) {
+  if (ragasEvaluationPollingTimer) {
+    window.clearTimeout(ragasEvaluationPollingTimer);
+    ragasEvaluationPollingTimer = null;
+  }
+  try {
+    const response = await apiFetch(`/evaluation/ragas/tasks/${runId}`);
+    const run = await response.json();
+    if (!response.ok) throw new Error(getErrorMessage(run, "读取 RAGAS 任务失败。"));
+    renderRagasEvaluation(run);
+    if (["pending", "running"].includes(run.status)) {
+      ragasEvaluationPollingTimer = window.setTimeout(
+        () => watchRagasEvaluation(runId),
+        2000,
+      );
+    } else {
+      runRagasEvaluationButton.disabled = false;
+      runRagasEvaluationButton.textContent = "运行 RAGAS 评测（10题）";
+    }
+  } catch (error) {
+    ragasEvaluationStatus.className = "ragas-evaluation-status error";
+    ragasEvaluationStatus.textContent = `读取 RAGAS 任务失败：${error.message}`;
+    runRagasEvaluationButton.disabled = false;
+    runRagasEvaluationButton.textContent = "运行 RAGAS 评测（10题）";
+  }
+}
+
+async function runRagasEvaluation() {
+  const confirmed = window.confirm(
+    "将随机抽样 10 道题，执行线上混合检索、重排序、OpenAI 回答生成和 RAGAS 四项评分，会消耗模型额度。确定继续吗？",
+  );
+  if (!confirmed) return;
+
+  runRagasEvaluationButton.disabled = true;
+  runRagasEvaluationButton.textContent = "正在创建任务...";
+  ragasEvaluationStatus.className = "ragas-evaluation-status";
+  ragasEvaluationStatus.textContent = "正在创建 RAGAS 评测任务...";
+  try {
+    const response = await apiFetch("/evaluation/ragas/tasks", { method: "POST" });
+    const run = await response.json();
+    if (!response.ok) throw new Error(getErrorMessage(run, "创建 RAGAS 评测任务失败。"));
+    renderRagasEvaluation(run);
+    runRagasEvaluationButton.textContent = "RAGAS 评测中...";
+    watchRagasEvaluation(run.id);
+  } catch (error) {
+    ragasEvaluationStatus.className = "ragas-evaluation-status error";
+    ragasEvaluationStatus.textContent = `创建 RAGAS 评测任务失败：${error.message}`;
+    runRagasEvaluationButton.disabled = false;
+    runRagasEvaluationButton.textContent = "运行 RAGAS 评测（10题）";
+  }
 }
 
 function renderMonitoring(data) {
@@ -2401,6 +2578,7 @@ refreshKnowledgeVersionsButton.addEventListener("click", loadKnowledgeVersions);
 refreshRebuildHistoryButton.addEventListener("click", loadRebuildJobHistory);
 runRagEvaluationButton.addEventListener("click", runRagEvaluation);
 runQualityEvaluationButton.addEventListener("click", runQualityEvaluation);
+runRagasEvaluationButton.addEventListener("click", runRagasEvaluation);
 compareRetrievalButton.addEventListener("click", compareRetrievalStrategies);
 diagnoseRetrievalButton.addEventListener("click", diagnoseCurrentRetrieval);
 refreshEvaluationHistoryButton.addEventListener("click", loadEvaluationHistory);

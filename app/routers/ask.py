@@ -45,6 +45,50 @@ URGENT_WARNING_KEYWORDS = (
     "头痛突然剧烈",
 )
 
+DIRECT_LOOKUP_KEYWORDS = (
+    "哪份资料",
+    "什么资料",
+    "哪个资料",
+    "哪篇资料",
+    "哪个专科",
+    "哪个科",
+    "哪个概览",
+    "查什么",
+    "看什么",
+    "哪里看",
+    "什么说明",
+    "使用前",
+    "说明书",
+)
+DRUG_QUESTION_KEYWORDS = (
+    "药物",
+    "药品",
+    "怎么用",
+    "如何用",
+    "服用",
+    "使用说明",
+    "注意事项",
+    "药效",
+    "作用",
+)
+SYMPTOM_QUESTION_KEYWORDS = (
+    "怎么办",
+    "怎么处理",
+    "不舒服",
+    "症状",
+    "疼",
+    "痛",
+    "发热",
+    "发烧",
+    "咳嗽",
+    "腹泻",
+    "头晕",
+    "恶心",
+    "呕吐",
+    "出血",
+    "瘀斑",
+)
+
 
 def get_chat_model() -> ChatOpenAI:
     return ChatOpenAI(
@@ -139,6 +183,39 @@ def search_knowledge(
         knowledge_type,
         source_filter,
         current_user,
+    )
+
+
+def build_answer_mode_instruction(question: str) -> str:
+    """Choose a concise answer shape before asking the model to generate text.
+
+    A single long medical template made document-location questions sound evasive.
+    The rules intentionally remain small and transparent so they can be tuned from
+    real evaluation failures without adding another model call.
+    """
+    normalized_question = question.replace(" ", "")
+    if any(keyword in normalized_question for keyword in DIRECT_LOOKUP_KEYWORDS):
+        return (
+            "资料定位模式：第一句必须直接回答用户要找的资料标题、专科或说明，"
+            "例如“建议优先查看《资料标题》”或“该问题对应某某专科”。"
+            "随后最多补充 2 至 3 条和问题直接相关的资料要点。"
+            "不要使用固定的“三个部分”标题，也不要先说泛化建议。"
+        )
+    if any(keyword in normalized_question for keyword in DRUG_QUESTION_KEYWORDS):
+        return (
+            "药物说明模式：第一句直接说明资料中该药物的作用或用户所问的核心结论，"
+            "随后列出 2 至 4 条资料中已有的使用说明或注意事项。"
+            "不要提供资料中没有的剂量、疗程或治疗方案。"
+        )
+    if any(keyword in normalized_question for keyword in SYMPTOM_QUESTION_KEYWORDS):
+        return (
+            "症状咨询模式：必须严格按三个部分回答："
+            "一、资料内容；二、通用健康建议；三、就医提示。"
+            "第一部分只能客观列出资料中的信息，不得把用户症状和疾病建立联系。"
+        )
+    return (
+        "知识问答模式：第一句先直接回答问题，再用 2 至 4 条资料要点补充。"
+        "不需要使用固定的“三个部分”标题；安全提示只在资料确有相关内容时简短给出。"
     )
     if vector_filter is not None:
         search_options["filter"] = vector_filter
@@ -385,6 +462,138 @@ def build_safety_references() -> list[dict]:
     ]
 
 
+def build_rag_answer_prompt() -> ChatPromptTemplate:
+    """Return the common prompt used by synchronous, streaming, and RAGAS flows."""
+    return ChatPromptTemplate.from_messages(
+        [
+            (
+                "system",
+                "你是医疗健康知识库助手。只能依据参考资料回答，"
+                "不能编造资料中没有的内容。不得根据用户症状判断、推测或声明"
+                "用户可能患有任何疾病或感染，也不要使用‘可能是’‘像是’等诊断性表达。"
+                "绝不能说用户的症状‘符合’‘相符’‘指向’任何疾病。"
+                "不能提供药物剂量或治疗方案。"
+                "如果资料不足，要明确说资料不足，并建议咨询医生。"
+                "资料可靠性提示：{source_limitations}\n"
+                "本次检索到的资料标题：{reference_names}\n"
+                "当前回答方式：{answer_mode}\n"
+                "无论回答方式如何，结尾保留一条简短提醒：内容仅供健康信息参考，"
+                "不代替医生诊断或处方。",
+            ),
+            (
+                "human",
+                "历史对话：\n{history}\n\n"
+                "参考资料：\n{context}\n\n用户问题：{question}",
+            ),
+        ]
+    )
+
+
+def run_rag_answer_pipeline(
+    session: Session,
+    question: str,
+    *,
+    knowledge_type: str = "all",
+    source_filter: str = "all",
+    current_user: User | None = None,
+    history_text: str = "暂无历史对话",
+) -> dict:
+    """Run the side-effect-free form of the normal first-turn RAG workflow.
+
+    RAGAS calls this function so each sampled case uses the production hybrid
+    retrieval, reranking, relevance filtering, prompt, and OpenAI generation
+    path without creating user conversation messages.
+    """
+    started_at = perf_counter()
+    urgent_answer = get_urgent_warning_response(question)
+    if urgent_answer:
+        references = build_safety_references()
+        metadata = build_response_metadata(
+            source="safety-keyword-guard",
+            references=references,
+            processing_path="safety-keyword-guard",
+            retrieval_scope=knowledge_type,
+            source_filter=source_filter,
+            retrieved_count=0,
+            started_at=started_at,
+        )
+        return {
+            "answer": urgent_answer,
+            "contexts": [reference["excerpt"] for reference in references],
+            **metadata,
+        }
+
+    knowledge_status = get_knowledge_status(session)
+    if not knowledge_status["is_current"]:
+        raise RuntimeError("知识库已过期，请先执行 POST /knowledge/rebuild")
+
+    try:
+        vector_store = get_vector_store()
+        matches = search_knowledge(
+            vector_store,
+            question,
+            knowledge_type,
+            source_filter,
+            current_user,
+            session,
+            question,
+        )
+    except Exception as error:
+        raise RuntimeError("知识库暂时不可用，请确认已执行 /knowledge/rebuild") from error
+
+    relevant_matches = select_distinct_relevant_matches(matches)
+    relevant_matches = select_title_matched_documents(question, relevant_matches)
+    relevant_documents = [document for document, _ in relevant_matches]
+    if not relevant_documents:
+        metadata = build_response_metadata(
+            source="milvus-vector-search:no-match",
+            references=[],
+            processing_path="vector-search-no-match",
+            retrieval_scope=knowledge_type,
+            source_filter=source_filter,
+            retrieved_count=0,
+            started_at=started_at,
+        )
+        return {
+            "answer": "知识库中没有找到足够相关的内容。建议换一种更具体的说法。",
+            "contexts": [],
+            **metadata,
+        }
+
+    context = "\n\n".join(document.page_content for document in relevant_documents)
+    references = build_references(relevant_matches)
+    reference_names = "、".join(reference["name"] for reference in references)
+    try:
+        response = get_chat_model().invoke(
+            build_rag_answer_prompt().format_messages(
+                context=context,
+                history=history_text,
+                question=question,
+                source_limitations=build_source_limitations(references),
+                reference_names=reference_names,
+                answer_mode=build_answer_mode_instruction(question),
+            )
+        )
+    except Exception as error:
+        raise RuntimeError("模型暂时不可用，请检查 CHAT_MODEL 和 API 配置") from error
+
+    retrieval_source, retrieval_path = retrieval_labels(relevant_matches)
+    metadata = build_response_metadata(
+        source=retrieval_source,
+        references=references,
+        processing_path=retrieval_path,
+        retrieval_scope=knowledge_type,
+        source_filter=source_filter,
+        retrieved_count=len(relevant_documents),
+        started_at=started_at,
+    )
+    return {
+        "answer": str(response.content),
+        "contexts": [document.page_content for document in relevant_documents],
+        **metadata,
+    }
+
+
 @router.post("", response_model=AskResponse)
 def ask_question(
     request: AskRequest,
@@ -586,32 +795,9 @@ def ask_question(
         for document in relevant_documents
     )
     references = build_references(relevant_matches)
+    reference_names = "、".join(reference["name"] for reference in references)
 
-    prompt = ChatPromptTemplate.from_messages(
-        [
-            (
-                "system",
-                "你是医疗健康知识库助手。只能依据参考资料回答，"
-                "不能编造资料中没有的内容。不得根据用户症状判断、推测或声明"
-                "用户可能患有任何疾病或感染，也不要使用‘可能是’‘像是’等诊断性表达。"
-                "绝不能说用户的症状‘符合’‘相符’‘指向’任何疾病。"
-                "当用户描述症状时，必须严格按三个部分回答："
-                "一、资料内容：仅客观列出参考资料中各病症的常见症状；"
-                "二、通用健康建议：只给资料中已有的休息、补水或观察建议；"
-                "三、就医提示：只列出资料中的警示信号或建议咨询医生的情况。"
-                "第一部分不得把用户症状与任何病症建立联系。"
-                "不能提供药物剂量或治疗方案。"
-                "如果资料不足，要明确说资料不足，并建议咨询医生。"
-                "资料可靠性提示：{source_limitations}"
-                "回答最后必须提醒：内容仅供健康信息参考，不代替医生诊断或处方。",
-            ),
-            (
-                "human",
-                "历史对话：\n{history}\n\n"
-                "参考资料：\n{context}\n\n用户问题：{question}",
-            ),
-        ]
-    )
+    prompt = build_rag_answer_prompt()
 
     try:
         response = get_chat_model().invoke(
@@ -620,6 +806,8 @@ def ask_question(
                 history=history_text,
                 question=request.question,
                 source_limitations=build_source_limitations(references),
+                reference_names=reference_names,
+                answer_mode=build_answer_mode_instruction(request.question),
             )
         )
         answer = str(response.content)
@@ -902,37 +1090,16 @@ def stream_answer(
 
     context = "\n\n".join(document.page_content for document in relevant_documents)
     references = build_references(relevant_matches)
+    reference_names = "、".join(reference["name"] for reference in references)
     retrieval_source, retrieval_path = retrieval_labels(relevant_matches)
-    prompt = ChatPromptTemplate.from_messages(
-        [
-            (
-                "system",
-                "你是医疗健康知识库助手。只能依据参考资料回答，"
-                "不能编造资料中没有的内容。不得根据用户症状判断、推测或声明"
-                "用户可能患有任何疾病或感染，也不要使用‘可能是’‘像是’等诊断性表达。"
-                "绝不能说用户的症状‘符合’‘相符’‘指向’任何疾病。"
-                "当用户描述症状时，必须严格按三个部分回答："
-                "一、资料内容：仅客观列出参考资料中各病症的常见症状；"
-                "二、通用健康建议：只给资料中已有的休息、补水或观察建议；"
-                "三、就医提示：只列出资料中的警示信号或建议咨询医生的情况。"
-                "第一部分不得把用户症状与任何病症建立联系。"
-                "不能提供药物剂量或治疗方案。"
-                "如果资料不足，要明确说资料不足，并建议咨询医生。"
-                "资料可靠性提示：{source_limitations}"
-                "回答最后必须提醒：内容仅供健康信息参考，不代替医生诊断或处方。",
-            ),
-            (
-                "human",
-                "历史对话：\n{history}\n\n"
-                "参考资料：\n{context}\n\n用户问题：{question}",
-            ),
-        ]
-    )
+    prompt = build_rag_answer_prompt()
     messages = prompt.format_messages(
         context=context,
         history=history_text,
         question=request.question,
         source_limitations=build_source_limitations(references),
+        reference_names=reference_names,
+        answer_mode=build_answer_mode_instruction(request.question),
     )
 
     def answer_event_stream():

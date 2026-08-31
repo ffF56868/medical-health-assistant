@@ -1,18 +1,34 @@
 import json
+import math
+import os
+from datetime import UTC, datetime
+from random import SystemRandom
+from threading import Lock
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status
 from sqlmodel import Session, select
 
-from app.database import get_session
+from app.database import engine, get_session
 from app.hybrid_search import hybrid_search
 from app.models import (
+    Condition,
+    Drug,
+    KnowledgeDocument,
     KnowledgeIndexState,
+    RAGASAutoEvaluationRun,
     RAGEvaluationCase,
     RAGEvaluationRun,
     RAGQualityEvaluationRun,
 )
+from app.ragas_compat import enable_ragas_langchain_compatibility
+from app.ragas_metrics import build_medical_answer_relevancy_metric
+from app.routers.ask import get_chat_model, run_rag_answer_pipeline
 from app.routers.auth import require_admin
 from app.schemas import (
+    RAGASAutoEvaluationRunListResponse,
+    RAGASAutoEvaluationRunRead,
+    RAGASMetricScores,
+    RAGASQuestionResult,
     RAGEvaluationCaseCreate,
     RAGEvaluationCaseListResponse,
     RAGEvaluationCaseRead,
@@ -37,6 +53,7 @@ from app.vector_store import (
     MIN_RELEVANCE_SCORE,
     RAG_RETRIEVAL_FETCH_COUNT,
     RAG_RETRIEVAL_RESULT_COUNT,
+    get_embeddings,
     get_knowledge_status,
     get_vector_store,
     select_distinct_relevant_matches,
@@ -55,6 +72,15 @@ BASELINE_RETRIEVAL_COUNT = 3
 EVALUATION_CASES: tuple[dict, ...] = ()
 QUALITY_ONLY_CASES: tuple[dict, ...] = ()
 QUALITY_CASE_CONFIG: dict[str, dict] = {}
+RAGAS_DEFAULT_SAMPLE_SIZE = 10
+RAGAS_MAX_SAMPLE_SIZE = 50
+RAGAS_REFERENCE_MAX_CHARS = 6000
+RAGAS_JOB_TIMEOUT_SECONDS = int(
+    os.getenv("RAGAS_JOB_TIMEOUT_SECONDS", str(60 * 60))
+)
+ACTIVE_RAGAS_STATUSES = {"pending", "running"}
+ragas_start_lock = Lock()
+ragas_execution_lock = Lock()
 
 
 def get_alternative_names(case: dict) -> list[str]:
@@ -953,3 +979,395 @@ def diagnose_retrieval(session: Session = Depends(get_session)):
         failed_count=sum(result.diagnostic_level == "failed" for result in results),
         results=results,
     )
+
+
+def get_ragas_active_run(session: Session) -> RAGASAutoEvaluationRun | None:
+    return session.exec(
+        select(RAGASAutoEvaluationRun)
+        .where(RAGASAutoEvaluationRun.status.in_(ACTIVE_RAGAS_STATUSES))
+        .order_by(RAGASAutoEvaluationRun.created_at.desc())
+    ).first()
+
+
+def recover_stale_ragas_runs(session: Session) -> None:
+    """Mark tasks interrupted by an API restart or an excessive runtime."""
+    now = datetime.now(UTC)
+    changed = False
+    timeout_minutes = max(1, RAGAS_JOB_TIMEOUT_SECONDS // 60)
+    active_runs = session.exec(
+        select(RAGASAutoEvaluationRun).where(
+            RAGASAutoEvaluationRun.status.in_(ACTIVE_RAGAS_STATUSES)
+        )
+    ).all()
+    for run in active_runs:
+        reference_time = run.started_at or run.created_at
+        if reference_time.tzinfo is None:
+            reference_time = reference_time.replace(tzinfo=UTC)
+        if (now - reference_time).total_seconds() <= RAGAS_JOB_TIMEOUT_SECONDS:
+            continue
+        run.status = "failed"
+        run.error_message = (
+            f"RAGAS 评测超过 {timeout_minutes} 分钟未完成，可能因服务重启中断，请重试"
+        )
+        run.completed_at = now
+        session.add(run)
+        changed = True
+    if changed:
+        session.commit()
+
+
+def normalize_ragas_score(value: object) -> float | None:
+    try:
+        score = float(value)
+    except (TypeError, ValueError):
+        return None
+    return round(score, 4) if math.isfinite(score) else None
+
+
+def get_ragas_results(run: RAGASAutoEvaluationRun) -> list[RAGASQuestionResult]:
+    try:
+        raw_results = json.loads(run.results_json)
+    except (TypeError, json.JSONDecodeError):
+        return []
+    if not isinstance(raw_results, list):
+        return []
+    results: list[RAGASQuestionResult] = []
+    for item in raw_results:
+        if not isinstance(item, dict):
+            continue
+        try:
+            results.append(RAGASQuestionResult.model_validate(item))
+        except ValueError:
+            continue
+    return results
+
+
+def get_ragas_metrics(run: RAGASAutoEvaluationRun) -> RAGASMetricScores | None:
+    values = {
+        "faithfulness": run.faithfulness,
+        "answer_relevancy": run.answer_relevancy,
+        "context_precision": run.context_precision,
+        "context_recall": run.context_recall,
+    }
+    if not any(value is not None for value in values.values()):
+        return None
+    return RAGASMetricScores(**values)
+
+
+def serialize_ragas_run(
+    run: RAGASAutoEvaluationRun,
+) -> RAGASAutoEvaluationRunRead:
+    return RAGASAutoEvaluationRunRead(
+        id=run.id,
+        status=run.status,
+        sample_size=run.sample_size,
+        total_count=run.total_count,
+        completed_count=run.completed_count,
+        metrics=get_ragas_metrics(run),
+        knowledge_document_count=run.knowledge_document_count,
+        knowledge_hash=run.knowledge_hash,
+        error_message=run.error_message,
+        created_at=run.created_at,
+        started_at=run.started_at,
+        completed_at=run.completed_at,
+        results=get_ragas_results(run),
+    )
+
+
+def get_case_reference_answer(session: Session, case: dict) -> tuple[str, bool]:
+    """Use the expected source record as RAGAS's answer reference."""
+    names = [str(case.get("expected_name", "")), *get_alternative_names(case)]
+    names = [name for name in names if name]
+    expected_type = case.get("expected_type")
+    if expected_type == "condition":
+        records = session.exec(
+            select(Condition).where(Condition.name.in_(names))
+        ).all()
+        by_name = {record.name: record for record in records}
+        for name in names:
+            record = by_name.get(name)
+            if record is not None:
+                return (
+                    f"病症名称：{record.name}\n"
+                    f"常见症状：{record.symptoms}\n"
+                    f"处理建议：{record.treatment}"[:RAGAS_REFERENCE_MAX_CHARS],
+                    True,
+                )
+    elif expected_type == "drug":
+        records = session.exec(select(Drug).where(Drug.name.in_(names))).all()
+        by_name = {record.name: record for record in records}
+        for name in names:
+            record = by_name.get(name)
+            if record is not None:
+                return (
+                    f"药物名称：{record.name}\n"
+                    f"药物作用：{record.effects}\n"
+                    f"使用说明：{record.instructions}"[:RAGAS_REFERENCE_MAX_CHARS],
+                    True,
+                )
+    elif expected_type == "document":
+        records = session.exec(
+            select(KnowledgeDocument).where(KnowledgeDocument.title.in_(names))
+        ).all()
+        by_title = {record.title: record for record in records}
+        for name in names:
+            record = by_title.get(name)
+            if record is not None:
+                return (
+                    f"资料标题：{record.title}\n资料内容：{record.content}"[
+                        :RAGAS_REFERENCE_MAX_CHARS
+                    ],
+                    True,
+                )
+
+    # Preserve the sampled case when its target was removed. The result marks
+    # this degraded reference explicitly instead of silently excluding a row.
+    return str(case.get("expected_name", "未提供参考资料")), False
+
+
+def calculate_ragas_averages(
+    results: list[dict],
+) -> dict[str, float | None]:
+    metric_names = (
+        "faithfulness",
+        "answer_relevancy",
+        "context_precision",
+        "context_recall",
+    )
+    averages: dict[str, float | None] = {}
+    for name in metric_names:
+        values = [
+            score
+            for result in results
+            if (score := normalize_ragas_score(result.get(name))) is not None
+        ]
+        averages[name] = round(sum(values) / len(values), 4) if values else None
+    return averages
+
+
+def execute_ragas_evaluation(
+    session: Session,
+    run: RAGASAutoEvaluationRun,
+) -> list[dict]:
+    """Generate live answers, then score them through the four RAGAS metrics."""
+    enable_ragas_langchain_compatibility()
+    from ragas import evaluate
+    from ragas.dataset_schema import EvaluationDataset, SingleTurnSample
+    from ragas.metrics import (
+        ContextPrecision,
+        ContextRecall,
+        Faithfulness,
+    )
+
+    knowledge_status = get_knowledge_status(session)
+    if not knowledge_status["is_current"]:
+        raise RuntimeError("知识库已过期，请先重建知识库后再运行 RAGAS 评测")
+
+    cases, _ = get_evaluation_cases(session)
+    if not cases:
+        raise RuntimeError("没有可运行的评测题，请先添加自定义评测题")
+    sampled_cases = SystemRandom().sample(
+        cases,
+        k=min(run.sample_size, len(cases)),
+    )
+    knowledge_index = session.get(KnowledgeIndexState, 1)
+    run.total_count = len(sampled_cases)
+    run.knowledge_document_count = knowledge_status.get("document_count", 0)
+    run.knowledge_hash = knowledge_index.content_hash if knowledge_index else None
+    session.add(run)
+    session.commit()
+
+    question_results: list[dict] = []
+    samples: list[SingleTurnSample] = []
+    for case in sampled_cases:
+        pipeline = run_rag_answer_pipeline(session, case["question"])
+        reference, reference_available = get_case_reference_answer(session, case)
+        references = pipeline.get("references", [])
+        context_titles = [
+            str(item.get("name", "未命名资料"))
+            for item in references
+            if isinstance(item, dict)
+        ]
+        question_results.append(
+            {
+                "case_id": str(case.get("case_id", "unknown")),
+                "case_source": str(case.get("case_source", "未标注来源")),
+                "question": str(case["question"]),
+                "expected_name": str(case.get("expected_name", "")),
+                "expected_type": str(case.get("expected_type", "")),
+                "category": get_case_category(case),
+                "answer": str(pipeline["answer"]),
+                "processing_path": str(pipeline["processing_path"]),
+                "retrieved_count": int(pipeline["retrieved_count"]),
+                "context_titles": context_titles,
+                "retrieved_contexts": list(pipeline["contexts"]),
+                "reference_available": reference_available,
+            }
+        )
+        samples.append(
+            SingleTurnSample(
+                user_input=str(case["question"]),
+                response=str(pipeline["answer"]),
+                retrieved_contexts=list(pipeline["contexts"]),
+                reference=reference,
+            )
+        )
+
+    run.completed_count = len(question_results)
+    session.add(run)
+    session.commit()
+
+    ragas_result = evaluate(
+        EvaluationDataset(samples=samples),
+        metrics=[
+            Faithfulness(),
+            build_medical_answer_relevancy_metric(),
+            ContextPrecision(),
+            ContextRecall(),
+        ],
+        llm=get_chat_model(),
+        embeddings=get_embeddings(),
+        raise_exceptions=False,
+        show_progress=False,
+        experiment_name=f"medical-ragas-run-{run.id}",
+    )
+    for result, scores in zip(question_results, ragas_result.scores, strict=True):
+        for name in (
+            "faithfulness",
+            "answer_relevancy",
+            "context_precision",
+            "context_recall",
+        ):
+            result[name] = normalize_ragas_score(scores.get(name))
+    return question_results
+
+
+def run_ragas_evaluation_job(run_id: int) -> None:
+    """Execute one persisted RAGAS task outside the request lifecycle."""
+    with ragas_execution_lock:
+        with Session(engine) as session:
+            run = session.get(RAGASAutoEvaluationRun, run_id)
+            if run is None or run.status not in ACTIVE_RAGAS_STATUSES:
+                return
+            run.status = "running"
+            run.started_at = datetime.now(UTC)
+            session.add(run)
+            session.commit()
+            try:
+                results = execute_ragas_evaluation(session, run)
+                averages = calculate_ragas_averages(results)
+                session.refresh(run)
+                run.status = "completed"
+                run.completed_count = len(results)
+                run.faithfulness = averages["faithfulness"]
+                run.answer_relevancy = averages["answer_relevancy"]
+                run.context_precision = averages["context_precision"]
+                run.context_recall = averages["context_recall"]
+                run.results_json = json.dumps(
+                    results,
+                    ensure_ascii=False,
+                    allow_nan=False,
+                )
+                run.completed_at = datetime.now(UTC)
+                session.add(run)
+                session.commit()
+            except Exception as error:
+                session.rollback()
+                with Session(engine) as failed_session:
+                    failed_run = failed_session.get(RAGASAutoEvaluationRun, run_id)
+                    if failed_run is not None:
+                        failed_run.status = "failed"
+                        failed_run.error_message = str(error)[:2000]
+                        failed_run.completed_at = datetime.now(UTC)
+                        failed_session.add(failed_run)
+                        failed_session.commit()
+
+
+@router.post(
+    "/ragas/tasks",
+    response_model=RAGASAutoEvaluationRunRead,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+def start_ragas_evaluation(
+    background_tasks: BackgroundTasks,
+    sample_size: int = Query(
+        default=RAGAS_DEFAULT_SAMPLE_SIZE,
+        ge=1,
+        le=RAGAS_MAX_SAMPLE_SIZE,
+    ),
+    session: Session = Depends(get_session),
+):
+    """Start a background RAGAS assessment; ten sampled cases are the default."""
+    with ragas_start_lock:
+        recover_stale_ragas_runs(session)
+        active_run = get_ragas_active_run(session)
+        if active_run is not None:
+            raise HTTPException(
+                status_code=409,
+                detail=f"RAGAS 评测任务 #{active_run.id} 正在执行，请先查看它的状态",
+            )
+        knowledge_status = get_knowledge_status(session)
+        if not knowledge_status["is_current"]:
+            raise HTTPException(
+                status_code=409,
+                detail="知识库已过期，请先重建知识库后再运行 RAGAS 评测",
+            )
+        cases, _ = get_evaluation_cases(session)
+        if not cases:
+            raise HTTPException(status_code=422, detail="没有可运行的评测题")
+        run = RAGASAutoEvaluationRun(sample_size=sample_size)
+        session.add(run)
+        session.commit()
+        session.refresh(run)
+        background_tasks.add_task(run_ragas_evaluation_job, run.id)
+        return serialize_ragas_run(run)
+
+
+@router.get(
+    "/ragas/tasks/active",
+    response_model=RAGASAutoEvaluationRunRead | None,
+)
+def get_active_ragas_evaluation(
+    session: Session = Depends(get_session),
+):
+    recover_stale_ragas_runs(session)
+    run = get_ragas_active_run(session)
+    return serialize_ragas_run(run) if run is not None else None
+
+
+@router.get(
+    "/ragas/tasks",
+    response_model=RAGASAutoEvaluationRunListResponse,
+)
+def list_ragas_evaluations(
+    limit: int = Query(default=10, ge=1, le=100),
+    session: Session = Depends(get_session),
+):
+    recover_stale_ragas_runs(session)
+    runs = session.exec(
+        select(RAGASAutoEvaluationRun)
+        .order_by(
+            RAGASAutoEvaluationRun.created_at.desc(),
+            RAGASAutoEvaluationRun.id.desc(),
+        )
+        .limit(limit)
+    ).all()
+    return RAGASAutoEvaluationRunListResponse(
+        total_count=len(session.exec(select(RAGASAutoEvaluationRun)).all()),
+        runs=[serialize_ragas_run(run) for run in runs],
+    )
+
+
+@router.get(
+    "/ragas/tasks/{run_id}",
+    response_model=RAGASAutoEvaluationRunRead,
+)
+def get_ragas_evaluation(
+    run_id: int,
+    session: Session = Depends(get_session),
+):
+    recover_stale_ragas_runs(session)
+    run = session.get(RAGASAutoEvaluationRun, run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail="RAGAS 评测任务不存在")
+    return serialize_ragas_run(run)

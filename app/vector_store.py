@@ -119,10 +119,15 @@ class MilvusVectorStore(Milvus):
         self.drop()
 
 
-def get_vector_store() -> MilvusVectorStore:
-    embeddings = OpenAIEmbeddings(
+def get_embeddings() -> OpenAIEmbeddings:
+    """Create the OpenAI embedding client shared by retrieval and RAGAS."""
+    return OpenAIEmbeddings(
         model=os.getenv("EMBEDDING_MODEL", "text-embedding-3-small")
     )
+
+
+def get_vector_store() -> MilvusVectorStore:
+    embeddings = get_embeddings()
     milvus_host = os.getenv("MILVUS_HOST", "milvus")
     milvus_port = os.getenv("MILVUS_PORT", "19530")
     return MilvusVectorStore(

@@ -260,6 +260,7 @@
                 <button class="secondary-button" id="diagnose-retrieval" type="button">诊断当前检索</button>
                 <button class="secondary-button" id="compare-retrieval" type="button">对比新旧检索</button>
                 <button class="secondary-button" id="run-quality-evaluation" type="button">评估回答质量</button>
+                <button class="secondary-button" id="run-ragas-evaluation" type="button">运行 RAGAS 评测（10题）</button>
                 <button class="secondary-button" id="run-rag-evaluation" type="button">运行全部评测</button>
               </div>
             </div>
@@ -316,6 +317,15 @@
               <div class="evaluation-results" id="evaluation-results"></div>
             </details>
             <div class="evaluation-quality-gate" id="evaluation-quality-gate"></div>
+            <section class="ragas-evaluation" aria-labelledby="ragas-evaluation-title">
+              <h4 id="ragas-evaluation-title">RAGAS 自动评测</h4>
+              <p class="ragas-evaluation-status" id="ragas-evaluation-status" aria-live="polite"></p>
+              <div class="ragas-evaluation-metrics" id="ragas-evaluation-metrics"></div>
+              <details class="collapsible-list" id="ragas-evaluation-results-details">
+                <summary id="ragas-evaluation-results-summary">RAGAS 逐题结果</summary>
+                <div class="ragas-evaluation-results" id="ragas-evaluation-results"></div>
+              </details>
+            </section>
             <section class="quality-evaluation" aria-labelledby="quality-evaluation-title">
               <h4 id="quality-evaluation-title">答案、引用与拒答评估</h4>
               <p class="quality-evaluation-status" id="quality-evaluation-status" aria-live="polite"></p>

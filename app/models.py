@@ -172,6 +172,30 @@ class RAGQualityEvaluationRun(SQLModel, table=True):
     )
 
 
+class RAGASAutoEvaluationRun(SQLModel, table=True):
+    """Persisted background task and per-question scores for a RAGAS run."""
+
+    id: int | None = Field(default=None, primary_key=True)
+    status: str = Field(default="pending", max_length=20, index=True)
+    sample_size: int = Field(default=10)
+    total_count: int = Field(default=0)
+    completed_count: int = Field(default=0)
+    faithfulness: float | None = None
+    answer_relevancy: float | None = None
+    context_precision: float | None = None
+    context_recall: float | None = None
+    knowledge_document_count: int = Field(default=0)
+    knowledge_hash: str | None = Field(default=None, max_length=64)
+    results_json: str = Field(default="[]", sa_type=Text)
+    error_message: str | None = Field(default=None, sa_type=Text)
+    created_at: datetime = Field(
+        default_factory=lambda: datetime.now(UTC),
+        index=True,
+    )
+    started_at: datetime | None = None
+    completed_at: datetime | None = None
+
+
 class RAGRequestMetric(SQLModel, table=True):
     id: int | None = Field(default=None, primary_key=True)
     user_id: int | None = Field(default=None, index=True)

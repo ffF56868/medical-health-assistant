@@ -8,7 +8,11 @@ from sqlmodel import Session, create_engine, select
 from app.database import create_db_and_tables
 from app.document_parsers import ParsedDocument
 from app.main import health_check
-from app.models import KnowledgeDocument, KnowledgeRebuildJob
+from app.models import (
+    KnowledgeDocument,
+    KnowledgeRebuildJob,
+    RAGASAutoEvaluationRun,
+)
 from app.routers import ask as ask_router
 from app.routers import evaluation as evaluation_router
 from app.routers import knowledge as knowledge_router
@@ -95,6 +99,121 @@ def mock_current_knowledge_base(monkeypatch):
         "get_knowledge_status",
         lambda session: {"is_current": True},
     )
+
+
+def build_ragas_question_result(question="RAGAS 测试问题"):
+    return {
+        "case_id": "ragas-test-case",
+        "case_source": "测试题",
+        "question": question,
+        "expected_name": "测试资料",
+        "expected_type": "document",
+        "category": "测试",
+        "answer": "这是依据测试资料生成的回答。",
+        "processing_path": "rag-hybrid-rerank",
+        "retrieved_count": 1,
+        "context_titles": ["测试资料"],
+        "retrieved_contexts": ["资料标题：测试资料\n资料内容：测试内容。"],
+        "reference_available": True,
+        "faithfulness": 0.9,
+        "answer_relevancy": 0.8,
+        "context_precision": 0.7,
+        "context_recall": 0.6,
+    }
+
+
+def test_rag_answer_prompt_uses_a_direct_lookup_mode():
+    messages = ask_router.build_rag_answer_prompt().format_messages(
+        context="资料标题：焦虑障碍健康知识\n资料内容：焦虑可影响日常生活。",
+        history="暂无历史对话",
+        question="焦虑影响学习工作时应看哪份资料？",
+        source_limitations="资料来自已审核来源。",
+        reference_names="焦虑障碍健康知识",
+        answer_mode=ask_router.build_answer_mode_instruction(
+            "焦虑影响学习工作时应看哪份资料？"
+        ),
+    )
+
+    system_message = messages[0].content
+    assert "资料定位模式" in system_message
+    assert "第一句必须直接回答" in system_message
+    assert "焦虑障碍健康知识" in system_message
+
+
+def test_rag_answer_mode_keeps_symptom_questions_in_the_safe_template():
+    instruction = ask_router.build_answer_mode_instruction("我头痛又发热怎么办？")
+
+    assert "症状咨询模式" in instruction
+    assert "一、资料内容" in instruction
+
+
+def test_ragas_task_defaults_to_ten_sampled_cases(client, monkeypatch):
+    case = {
+        "case_id": "ragas-task-case",
+        "case_source": "测试题",
+        "question": "测试 RAGAS 任务",
+        "expected_name": "测试资料",
+        "expected_type": "document",
+        "category": "测试",
+    }
+    monkeypatch.setattr(evaluation_router, "EVALUATION_CASES", (case,))
+    monkeypatch.setattr(
+        evaluation_router,
+        "get_knowledge_status",
+        lambda session: {"is_current": True},
+    )
+    monkeypatch.setattr(
+        evaluation_router,
+        "run_ragas_evaluation_job",
+        lambda _run_id: None,
+    )
+
+    response = client.post("/evaluation/ragas/tasks")
+
+    assert response.status_code == 202
+    data = response.json()
+    assert data["status"] == "pending"
+    assert data["sample_size"] == 10
+    assert data["total_count"] == 0
+    assert data["metrics"] is None
+
+    history_response = client.get("/evaluation/ragas/tasks?limit=1")
+    assert history_response.status_code == 200
+    assert history_response.json()["total_count"] == 1
+    assert history_response.json()["runs"][0]["id"] == data["id"]
+
+
+def test_ragas_worker_persists_aggregate_and_question_scores(
+    test_engine,
+    monkeypatch,
+):
+    with Session(test_engine) as session:
+        run = RAGASAutoEvaluationRun(sample_size=10)
+        session.add(run)
+        session.commit()
+        session.refresh(run)
+        run_id = run.id
+
+    monkeypatch.setattr(evaluation_router, "engine", test_engine)
+    monkeypatch.setattr(
+        evaluation_router,
+        "execute_ragas_evaluation",
+        lambda _session, _run: [build_ragas_question_result()],
+    )
+
+    evaluation_router.run_ragas_evaluation_job(run_id)
+
+    with Session(test_engine) as session:
+        run = session.get(RAGASAutoEvaluationRun, run_id)
+        assert run.status == "completed"
+        assert run.completed_count == 1
+        assert run.faithfulness == 0.9
+        assert run.answer_relevancy == 0.8
+        assert run.context_precision == 0.7
+        assert run.context_recall == 0.6
+        serialized = evaluation_router.serialize_ragas_run(run)
+        assert serialized.results[0].question == "RAGAS 测试问题"
+        assert serialized.results[0].context_titles == ["测试资料"]
 
 
 def test_condition_can_be_created_and_listed(client):

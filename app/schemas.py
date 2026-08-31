@@ -708,6 +708,54 @@ class RAGQualityResponse(SQLModel):
     results: list[RAGQualityCaseResult] = Field(default_factory=list)
 
 
+class RAGASMetricScores(SQLModel):
+    faithfulness: float | None = None
+    answer_relevancy: float | None = None
+    context_precision: float | None = None
+    context_recall: float | None = None
+
+
+class RAGASQuestionResult(SQLModel):
+    case_id: str
+    case_source: str
+    question: str
+    expected_name: str
+    expected_type: str
+    category: str
+    answer: str
+    processing_path: str
+    retrieved_count: int
+    context_titles: list[str] = Field(default_factory=list)
+    retrieved_contexts: list[str] = Field(default_factory=list)
+    reference_available: bool
+    faithfulness: float | None = None
+    answer_relevancy: float | None = None
+    context_precision: float | None = None
+    context_recall: float | None = None
+    error_message: str | None = None
+
+
+class RAGASAutoEvaluationRunRead(SQLModel):
+    id: int
+    status: str
+    sample_size: int
+    total_count: int
+    completed_count: int
+    metrics: RAGASMetricScores | None = None
+    knowledge_document_count: int
+    knowledge_hash: str | None = None
+    error_message: str | None = None
+    created_at: datetime
+    started_at: datetime | None = None
+    completed_at: datetime | None = None
+    results: list[RAGASQuestionResult] = Field(default_factory=list)
+
+
+class RAGASAutoEvaluationRunListResponse(SQLModel):
+    total_count: int
+    runs: list[RAGASAutoEvaluationRunRead] = Field(default_factory=list)
+
+
 class MonitoringPathMetric(SQLModel):
     processing_path: str
     request_count: int

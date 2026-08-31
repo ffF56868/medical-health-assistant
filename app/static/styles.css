@@ -442,6 +442,36 @@ h2 { font-size: 20px; margin: 0; }
 
 .evaluation-quality-gate p { margin: 3px 0 0; }
 
+.ragas-evaluation { border-top: 1px solid #dce4e5; margin-top: 18px; padding-top: 14px; }
+
+.ragas-evaluation h4 { color: #254b4d; font-size: 14px; margin: 0; }
+
+.ragas-evaluation-status { color: #526166; font-size: 13px; line-height: 1.55; min-height: 20px; margin: 8px 0 0; }
+
+.ragas-evaluation-status.running { color: #315b5d; }
+
+.ragas-evaluation-status.completed { color: #387f5e; }
+
+.ragas-evaluation-status.failed, .ragas-evaluation-status.error { color: #9c3024; }
+
+.ragas-evaluation-metrics { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+
+.ragas-evaluation-results { display: grid; gap: 8px; margin-top: 12px; }
+
+.ragas-evaluation-result { border-left: 3px solid #3b7475; padding: 7px 0 7px 10px; }
+
+.ragas-evaluation-result h5 { color: #254b4d; font-size: 14px; margin: 0; }
+
+.ragas-evaluation-result p { color: #526166; font-size: 13px; line-height: 1.55; margin: 3px 0 0; overflow-wrap: anywhere; }
+
+.ragas-evaluation-result .ragas-score-line { color: #315b5d; font-weight: 700; }
+
+.ragas-evaluation-result .ragas-context-line { color: #607176; }
+
+.ragas-evaluation-result .ragas-answer { white-space: pre-wrap; }
+
+.ragas-evaluation-result .ragas-warning { color: #8b4b10; }
+
 .quality-evaluation { border-top: 1px solid #dce4e5; margin-top: 18px; padding-top: 14px; }
 
 .quality-evaluation h4 { color: #254b4d; font-size: 14px; margin: 0; }
