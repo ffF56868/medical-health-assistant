@@ -184,6 +184,9 @@ def search_knowledge(
         source_filter,
         current_user,
     )
+    if vector_filter is not None:
+        search_options["filter"] = vector_filter
+    return vector_store.similarity_search_with_relevance_scores(query, **search_options)
 
 
 def build_answer_mode_instruction(question: str) -> str:
@@ -217,9 +220,6 @@ def build_answer_mode_instruction(question: str) -> str:
         "知识问答模式：第一句先直接回答问题，再用 2 至 4 条资料要点补充。"
         "不需要使用固定的“三个部分”标题；安全提示只在资料确有相关内容时简短给出。"
     )
-    if vector_filter is not None:
-        search_options["filter"] = vector_filter
-    return vector_store.similarity_search_with_relevance_scores(query, **search_options)
 
 
 def retrieval_labels(matches: list[tuple[object, float]]) -> tuple[str, str]:

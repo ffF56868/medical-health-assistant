@@ -16,6 +16,8 @@ from app.models import (
 from app.routers import ask as ask_router
 from app.routers import evaluation as evaluation_router
 from app.routers import knowledge as knowledge_router
+from app.ragas_compat import enable_ragas_langchain_compatibility
+from app.ragas_metrics import build_medical_answer_relevancy_metric
 from app.seed_specialty_knowledge import (
     FOCUSED_KNOWLEDGE_DOCUMENTS,
     SPECIALTY_KNOWLEDGE_DOCUMENTS,
@@ -145,6 +147,30 @@ def test_rag_answer_mode_keeps_symptom_questions_in_the_safe_template():
 
     assert "症状咨询模式" in instruction
     assert "一、资料内容" in instruction
+
+
+def test_vector_only_search_remains_available_without_a_database_session():
+    vector_store = FakeVectorStore([])
+
+    result = ask_router.search_knowledge(
+        vector_store,
+        "测试检索",
+        "all",
+        "all",
+    )
+
+    assert result == []
+    assert vector_store.last_k == 8
+
+
+def test_medical_ragas_metric_does_not_treat_safety_language_as_evasion():
+    enable_ragas_langchain_compatibility()
+    metric = build_medical_answer_relevancy_metric()
+
+    instruction = metric.question_generation.instruction
+    assert metric.name == "answer_relevancy"
+    assert "医疗安全提示" in instruction
+    assert "不得判为回避" in instruction
 
 
 def test_ragas_task_defaults_to_ten_sampled_cases(client, monkeypatch):
