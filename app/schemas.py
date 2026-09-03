@@ -308,6 +308,38 @@ class ConversationSummary(SQLModel):
     updated_at: datetime
 
 
+class UserMemoryRead(SQLModel):
+    id: int
+    memory_key: str
+    content: str
+    importance: float
+    source_conversation_id: str | None = None
+    access_count: int
+    created_at: datetime
+    updated_at: datetime
+
+
+class MemoryMessageRead(SQLModel):
+    role: str
+    content: str
+    created_at: datetime
+
+
+class MemoryOverview(SQLModel):
+    conversation_id: str
+    short_term_summary: str = ""
+    summarized_message_count: int = 0
+    short_term_message_count: int = 0
+    recent_message_limit: int
+    recent_messages: list[MemoryMessageRead] = Field(default_factory=list)
+    long_term_memories: list[UserMemoryRead] = Field(default_factory=list)
+
+
+class MemoryDeleteResponse(SQLModel):
+    deleted: bool
+    memory_id: int
+
+
 def normalize_optional_text(value: str | None) -> str | None:
     if value is None:
         return None

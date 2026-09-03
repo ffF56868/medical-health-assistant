@@ -17,6 +17,21 @@ from langchain_core.documents import Document
 ORIGINAL_SCORE_WEIGHT = 0.45
 TEXT_MATCH_WEIGHT = 0.35
 TITLE_MATCH_WEIGHT = 0.20
+PRIORITY_KEYWORD_RERANK_WEIGHT = 0.25
+SPECIALTY_ROUTE_RERANK_WEIGHT = 0.35
+
+# These routes only apply when the user explicitly asks which specialty
+# overview to consult. They select a knowledge source, not a diagnosis.
+SPECIALTY_ROUTE_RULES = (
+    (
+        "神经内科",
+        ("头晕", "头痛", "麻木", "言语不清", "视物异常", "平衡障碍", "抽搐", "意识改变"),
+    ),
+    (
+        "骨科",
+        ("外伤", "肿胀", "畸形", "负重", "骨折", "关节"),
+    ),
+)
 
 RERANK_STOP_WORDS = {
     "什么",
@@ -109,6 +124,20 @@ def _title_score(terms: list[str], title: str) -> float:
     return min(1.0, 0.55 + longest_match / max(10, len(title) * 2))
 
 
+def _specialty_route_score(query: str, title: str) -> float:
+    """Return a routing bonus for an explicit specialty-overview question."""
+    if not any(marker in query for marker in ("哪个专科", "哪个内科", "哪个外科", "哪个科", "专科概览", "外科概览")):
+        return 0.0
+    if "概览" not in title:
+        return 0.0
+    for specialty, signals in SPECIALTY_ROUTE_RULES:
+        if specialty not in title:
+            continue
+        signal_count = sum(signal in query for signal in signals)
+        return 1.0 if signal_count >= 2 else 0.0
+    return 0.0
+
+
 def rerank_matches(
     query: str,
     matches: list[tuple[object, float]],
@@ -124,6 +153,7 @@ def rerank_matches(
         metadata = dict(document.metadata)
         text = _normalize_text(document.page_content)
         title = _normalize_text(metadata.get("name", ""))
+        specialty_route_score = _specialty_route_score(_normalize_text(query), title)
 
         if terms:
             text_score = _overlap_score(terms, text)
@@ -136,11 +166,27 @@ def rerank_matches(
                 ORIGINAL_SCORE_WEIGHT * original_score
                 + (1 - ORIGINAL_SCORE_WEIGHT) * lexical_score
             )
+            # MySQL records how well a candidate covers high-signal medical
+            # terms (for example "贫血、瘀斑、出血"). Preserve that evidence
+            # through reranking instead of letting a broad vector match win.
+            priority_ratio = _bounded_score(
+                metadata.get("keyword_priority_match_ratio")
+            )
+            final_score = min(
+                1.0,
+                final_score
+                + PRIORITY_KEYWORD_RERANK_WEIGHT * priority_ratio
+                + SPECIALTY_ROUTE_RERANK_WEIGHT * specialty_route_score,
+            )
         else:
             text_score = 0.0
             title_score = 0.0
             lexical_score = 0.0
-            final_score = original_score
+            priority_ratio = 0.0
+            final_score = min(
+                1.0,
+                original_score + SPECIALTY_ROUTE_RERANK_WEIGHT * specialty_route_score,
+            )
 
         metadata.update(
             {
@@ -149,6 +195,8 @@ def rerank_matches(
                 "rerank_text_score": round(text_score, 4),
                 "rerank_title_score": round(title_score, 4),
                 "rerank_lexical_score": round(lexical_score, 4),
+                "rerank_priority_match_ratio": round(priority_ratio, 4),
+                "rerank_specialty_route_score": round(specialty_route_score, 4),
                 "rerank_score": round(final_score, 4),
             }
         )

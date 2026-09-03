@@ -138,7 +138,7 @@ def test_rag_answer_prompt_uses_a_direct_lookup_mode():
 
     system_message = messages[0].content
     assert "资料定位模式" in system_message
-    assert "第一句必须直接回答" in system_message
+    assert "第一句必须写" in system_message
     assert "焦虑障碍健康知识" in system_message
 
 
@@ -147,6 +147,190 @@ def test_rag_answer_mode_keeps_symptom_questions_in_the_safe_template():
 
     assert "症状咨询模式" in instruction
     assert "一、资料内容" in instruction
+
+
+def test_rag_answer_mode_keeps_a_page_question_within_that_page():
+    instruction = ask_router.build_answer_mode_instruction(
+        "常见感冒对症药物 PDF 第 1 页主要介绍什么？"
+    )
+
+    assert "页码定位模式" in instruction
+    assert "第 1 页" in instruction
+
+
+def test_rag_answer_mode_prioritizes_department_lookup_over_symptom_template():
+    instruction = ask_router.build_answer_mode_instruction(
+        "反复咳嗽、喘息和气促应了解哪个内科资料？"
+    )
+
+    assert "资料定位模式" in instruction
+    assert "症状咨询模式" not in instruction
+
+
+def test_pure_document_lookup_answer_reuses_the_user_question_and_source_title():
+    document = Document(
+        page_content="资料标题：健康体检与常见指标解读概览\n资料内容：血糖异常需要结合复查结果判断。",
+        metadata={"type": "document", "name": "健康体检与常见指标解读概览"},
+    )
+    answer = ask_router.build_document_lookup_answer(
+        "血糖异常时应先查哪份解读资料？",
+        [{"name": "健康体检与常见指标解读概览"}],
+        [document],
+    )
+
+    assert "健康体检与常见指标解读概览" in answer
+    assert "血糖异常需要结合复查结果判断" in answer
+    assert "资料提示：" not in answer
+    assert "针对“" not in answer
+    assert ask_router.is_pure_document_lookup_question(
+        "体检报告出现异常指标时应先查哪份解读资料？"
+    )
+    assert not ask_router.is_pure_document_lookup_question(
+        "常见感冒对症药物 PDF 第 1 页主要介绍什么？"
+    )
+
+
+def test_structured_drug_answer_uses_the_original_database_fields():
+    drug_document = Document(
+        page_content=(
+            "药物名称：蒙脱石散\n"
+            "药物作用：用于部分急性腹泻时的对症处理\n"
+            "使用说明：按照说明书使用并补充水分"
+        ),
+        metadata={"type": "drug", "name": "蒙脱石散"},
+    )
+
+    answer = ask_router.build_structured_drug_answer(
+        "急性腹泻时蒙脱石散有什么作用？",
+        [drug_document],
+    )
+
+    assert answer == (
+        "蒙脱石散的作用：用于部分急性腹泻时的对症处理。"
+        "使用提示：按照说明书使用并补充水分。"
+    )
+
+
+def test_structured_drug_answer_handles_an_explicit_drug_instruction_question():
+    drug_document = Document(
+        page_content=(
+            "药物名称：奥司他韦\n"
+            "药物作用：用于部分流感病毒感染的抗病毒治疗或预防\n"
+            "使用说明：需要在医生指导下使用"
+        ),
+        metadata={"type": "drug", "name": "奥司他韦"},
+    )
+
+    answer = ask_router.build_structured_drug_answer(
+        "使用奥司他韦前应该看哪些说明？",
+        [drug_document],
+    )
+
+    assert answer is not None
+    assert "奥司他韦的作用" in answer
+
+
+def test_exact_record_and_page_matches_remove_unrelated_contexts():
+    exact_drug = Document(
+        page_content="对乙酰氨基酚资料",
+        metadata={"type": "drug", "record_id": 1, "name": "对乙酰氨基酚"},
+    )
+    unrelated_drug = Document(
+        page_content="布洛芬资料",
+        metadata={"type": "drug", "record_id": 2, "name": "布洛芬"},
+    )
+    page_one = Document(
+        page_content="PDF 第 1 页",
+        metadata={
+            "type": "document",
+            "record_id": 3,
+            "name": "常见感冒对症药物（第1页）",
+            "page_number": 1,
+        },
+    )
+    page_two = Document(
+        page_content="PDF 第 2 页",
+        metadata={
+            "type": "document",
+            "record_id": 4,
+            "name": "常见感冒对症药物（第2页）",
+            "page_number": 2,
+        },
+    )
+
+    drug_matches = ask_router.select_title_matched_documents(
+        "想了解对乙酰氨基酚的作用。",
+        [(exact_drug, 0.8), (unrelated_drug, 0.9)],
+    )
+    page_matches = ask_router.select_page_matched_documents(
+        "常见感冒对症药物 PDF 第 1 页主要介绍什么？",
+        [(page_one, 0.8), (page_two, 0.9)],
+    )
+
+    assert [match[0].metadata["name"] for match in drug_matches] == ["对乙酰氨基酚"]
+    assert [match[0].metadata["name"] for match in page_matches] == [
+        "常见感冒对症药物（第1页）"
+    ]
+
+
+def test_document_lookup_uses_top_ranked_match_without_a_exact_title():
+    sleep_document = Document(
+        page_content="睡眠健康资料",
+        metadata={"type": "document", "record_id": 1, "name": "睡眠健康提示"},
+    )
+    drug_document = Document(
+        page_content="布洛芬资料",
+        metadata={"type": "drug", "record_id": 2, "name": "布洛芬"},
+    )
+    matches = [(sleep_document, 0.9), (drug_document, 0.8)]
+
+    ordinary_question_matches = ask_router.select_title_matched_documents(
+        "睡眠问题可以如何处理？",
+        matches,
+    )
+    lookup_question_matches = ask_router.select_title_matched_documents(
+        "睡眠问题应该看哪份资料？",
+        matches,
+    )
+
+    assert ordinary_question_matches == matches
+    assert lookup_question_matches == [(sleep_document, 0.9)]
+
+
+def test_specialty_lookup_prefers_a_specialty_overview_document():
+    condition_article = Document(
+        page_content="焦虑障碍资料",
+        metadata={"type": "document", "record_id": 1, "name": "焦虑障碍：健康教育"},
+    )
+    specialty_overview = Document(
+        page_content="精神心理科资料",
+        metadata={"type": "document", "record_id": 2, "name": "精神心理科常见问题概览"},
+    )
+
+    selected = ask_router.select_title_matched_documents(
+        "持续焦虑、情绪低落或睡眠受影响应看哪个专科概览？",
+        [(condition_article, 0.9), (specialty_overview, 0.6)],
+    )
+
+    assert selected == [(specialty_overview, 0.6)]
+
+
+def test_condition_lookup_prefers_a_structured_condition_record():
+    overview_document = Document(
+        page_content="消化内科资料",
+        metadata={"type": "document", "record_id": 1, "name": "消化内科常见病概览"},
+    )
+    condition_document = Document(
+        page_content="胃食管反流资料",
+        metadata={"type": "condition", "record_id": 2, "name": "胃食管反流"},
+    )
+
+    selected = ask_router.select_title_matched_documents(
+        "夜间咳嗽同时反酸时应该检索哪种病症？",
+        [(overview_document, 0.9), (condition_document, 0.5)],
+    )
+
+    assert selected == [(condition_document, 0.5)]
 
 
 def test_vector_only_search_remains_available_without_a_database_session():

@@ -51,3 +51,22 @@ def test_reranker_does_not_boost_every_specialty_overview_for_a_generic_title():
     )
 
     assert matches[0][0].metadata["name"] == "皮肤科常见病概览"
+
+
+def test_reranker_routes_multi_signal_neurology_questions_to_its_overview():
+    cardiovascular = Document(
+        page_content="心血管内科资料，包含头晕和头痛。",
+        metadata={"name": "心血管内科常见病概览"},
+    )
+    neurology = Document(
+        page_content="神经内科资料，包含头痛、四肢麻木和神经系统警示。",
+        metadata={"name": "神经内科常见病概览"},
+    )
+
+    matches = rerank_matches(
+        "头晕、肢体麻木、头痛等问题属于哪个专科概览？",
+        [(cardiovascular, 0.85), (neurology, 0.55)],
+    )
+
+    assert matches[0][0].metadata["name"] == "神经内科常见病概览"
+    assert matches[0][0].metadata["rerank_specialty_route_score"] == 1.0

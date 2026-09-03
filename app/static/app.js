@@ -22,6 +22,12 @@ const accountStatus = document.querySelector("#account-status");
 const accountCurrent = document.querySelector("#account-current");
 const accountLogoutButton = document.querySelector("#account-logout");
 const accountLoggedInStatus = document.querySelector("#account-logged-in-status");
+const refreshMemoryButton = document.querySelector("#refresh-memory");
+const memoryStats = document.querySelector("#memory-stats");
+const memorySummary = document.querySelector("#memory-summary");
+const memoryRecentList = document.querySelector("#memory-recent-list");
+const memoryLongTermList = document.querySelector("#memory-long-term-list");
+const memoryStatus = document.querySelector("#memory-status");
 const referenceTemplate = document.querySelector("#reference-template");
 const referenceDialog = document.querySelector("#reference-dialog");
 const referenceDialogTitle = document.querySelector("#reference-dialog-title");
@@ -240,6 +246,114 @@ function renderAccountState() {
   updatePermissionUI();
 }
 
+function getMemoryKeyLabel(memoryKey) {
+  return ({
+    user_name: "称呼",
+    user_age: "年龄",
+    preferred_language: "语言偏好",
+    preferred_style: "回答风格",
+    allergy: "过敏史",
+    medical_history: "病史",
+    long_term_medication: "长期用药",
+  })[memoryKey] || "用户信息";
+}
+
+function createMemoryStat(label, value) {
+  const item = document.createElement("div");
+  item.className = "memory-stat";
+  const labelElement = document.createElement("span");
+  labelElement.textContent = label;
+  const valueElement = document.createElement("strong");
+  valueElement.textContent = value;
+  item.append(labelElement, valueElement);
+  return item;
+}
+
+function renderMemoryOverview(data) {
+  memoryStats.innerHTML = "";
+  memoryStats.append(
+    createMemoryStat("短期消息", `${data.short_term_message_count}/${data.recent_message_limit}`),
+    createMemoryStat("已压缩消息", String(data.summarized_message_count)),
+    createMemoryStat("长期记忆", String(data.long_term_memories.length)),
+  );
+
+  memorySummary.textContent = data.short_term_summary || "当前会话还没有摘要。对话超过一定长度后，旧内容会自动压缩到这里。";
+
+  memoryRecentList.innerHTML = "";
+  if (data.recent_messages?.length) {
+    for (const message of data.recent_messages) {
+      const item = document.createElement("p");
+      item.className = "memory-recent-item";
+      item.textContent = `${message.role === "user" ? "你" : "助手"}：${message.content}`;
+      memoryRecentList.append(item);
+    }
+  } else {
+    memoryRecentList.innerHTML = '<p class="memory-empty">当前会话还没有消息。</p>';
+  }
+
+  memoryLongTermList.innerHTML = "";
+  if (data.long_term_memories.length === 0) {
+    memoryLongTermList.innerHTML = '<p class="memory-empty">还没有保存长期记忆。你可以在对话中明确说“我叫……”或“我对……过敏”。</p>';
+    return;
+  }
+  for (const memory of data.long_term_memories) {
+    const item = document.createElement("article");
+    item.className = "memory-long-term-item";
+    const content = document.createElement("div");
+    const heading = document.createElement("strong");
+    heading.textContent = getMemoryKeyLabel(memory.memory_key);
+    const text = document.createElement("p");
+    text.textContent = memory.content;
+    const meta = document.createElement("small");
+    meta.textContent = `重要性 ${Math.round(memory.importance * 100)}% | 使用 ${memory.access_count} 次`;
+    content.append(heading, text, meta);
+    const deleteButton = document.createElement("button");
+    deleteButton.className = "text-button danger-button";
+    deleteButton.type = "button";
+    deleteButton.textContent = "删除";
+    deleteButton.title = "删除这条长期记忆";
+    deleteButton.addEventListener("click", () => deleteUserMemory(memory, deleteButton));
+    item.append(content, deleteButton);
+    memoryLongTermList.append(item);
+  }
+}
+
+async function loadMemoryOverview() {
+  if (!currentUser) return;
+  memoryStatus.className = "memory-status account-status";
+  memoryStatus.textContent = "正在读取记忆...";
+  refreshMemoryButton.disabled = true;
+  try {
+    const response = await apiFetch(`/memory?conversation_id=${encodeURIComponent(conversationId)}`);
+    const data = await response.json();
+    if (!response.ok) throw new Error(getErrorMessage(data, "读取记忆失败。"));
+    renderMemoryOverview(data);
+    memoryStatus.textContent = `已读取会话 ${conversationId}`;
+  } catch (error) {
+    memoryStatus.className = "memory-status account-status error";
+    memoryStatus.textContent = `读取失败：${error.message}`;
+  } finally {
+    refreshMemoryButton.disabled = false;
+  }
+}
+
+async function deleteUserMemory(memory, button) {
+  if (!window.confirm(`确定删除这条长期记忆吗？\n${memory.content}`)) return;
+  button.disabled = true;
+  memoryStatus.textContent = "正在删除...";
+  try {
+    const response = await apiFetch(`/memory/${memory.id}`, { method: "DELETE" });
+    const data = await response.json();
+    if (!response.ok) throw new Error(getErrorMessage(data, "删除记忆失败。"));
+    await loadMemoryOverview();
+    memoryStatus.textContent = "已删除这条长期记忆。";
+  } catch (error) {
+    memoryStatus.className = "memory-status account-status error";
+    memoryStatus.textContent = `删除失败：${error.message}`;
+    button.disabled = false;
+  }
+}
+
 function updatePermissionUI() {
   const isAdmin = Boolean(currentUser?.is_admin);
   const lock = " \uD83D\uDD12";
@@ -277,6 +391,7 @@ function openAccountDialog() {
   accountStatus.textContent = "";
   accountLoggedInStatus.textContent = "";
   if (!accountDialog.open) accountDialog.showModal();
+  if (currentUser) loadMemoryOverview();
 }
 
 function closeAccountDialog() {
@@ -683,6 +798,7 @@ function resetConversation() {
   messageList.innerHTML = "";
   appendMessage("已开始新的对话。你可以继续向我询问健康资料中的内容。", "assistant");
   loadConversationList();
+  loadMemoryOverview();
   questionInput.focus();
 }
 
@@ -758,6 +874,7 @@ async function loadConversation(nextConversationId) {
     }
     if (messages.length === 0) renderWelcomeMessage();
     loadConversationList();
+    loadMemoryOverview();
     setManagerVisible(false);
   } catch (error) {
     appendMessage(`无法加载历史对话：${error.message}`, "assistant");
@@ -2549,6 +2666,7 @@ form.addEventListener("submit", async (event) => {
   try {
     await requestStreamingAnswer(question);
     loadConversationList();
+    loadMemoryOverview();
   } catch (error) {
     appendMessage(`暂时无法回答：${error.message}`, "assistant");
   } finally {
@@ -2564,6 +2682,7 @@ accountToggleButton.addEventListener("click", openAccountDialog);
 accountDialogCloseButton.addEventListener("click", closeAccountDialog);
 accountForm.addEventListener("submit", submitAccount);
 accountLogoutButton.addEventListener("click", logoutAccount);
+refreshMemoryButton.addEventListener("click", loadMemoryOverview);
 document.querySelectorAll("[data-account-mode]").forEach((tab) => {
   tab.addEventListener("click", () => setAccountMode(tab.dataset.accountMode));
 });

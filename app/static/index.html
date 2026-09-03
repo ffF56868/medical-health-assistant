@@ -465,10 +465,36 @@
         <p class="eyebrow">当前登录账号</p>
         <p class="account-current" id="account-current"></p>
         <p class="account-field-hint">你可以继续使用当前的健康问答功能。</p>
+
+        <section class="memory-panel" aria-labelledby="memory-panel-title">
+          <div class="memory-panel-heading">
+            <div>
+              <p class="eyebrow">分层记忆</p>
+              <h3 id="memory-panel-title">当前记忆状态</h3>
+            </div>
+            <button class="secondary-button memory-refresh" id="refresh-memory" type="button">刷新</button>
+          </div>
+          <p class="account-field-hint">短期记忆服务于当前会话；长期记忆只保存你明确表达并通过筛选的信息。</p>
+          <div class="memory-stats" id="memory-stats"></div>
+          <div class="memory-block">
+            <h4>短期摘要</h4>
+            <p class="memory-summary" id="memory-summary">当前会话还没有摘要。</p>
+          </div>
+          <div class="memory-block">
+            <h4>最近对话</h4>
+            <div class="memory-recent-list" id="memory-recent-list"></div>
+          </div>
+          <div class="memory-block">
+            <h4>长期记忆</h4>
+            <div class="memory-long-term-list" id="memory-long-term-list"></div>
+          </div>
+          <p class="memory-status account-status" id="memory-status" aria-live="polite"></p>
+        </section>
+
         <button class="secondary-button" id="account-logout" type="button">退出登录</button>
         <p class="account-status" id="account-logged-in-status" aria-live="polite"></p>
       </section>
     </dialog>
-    <script src="/static/app.js?v=20260828-retrieval-metrics"></script>
+    <script src="/static/app.js?v=20260903-layered-memory"></script>
   </body>
 </html>

@@ -1,5 +1,6 @@
 import os
 import json
+import re
 from datetime import datetime
 from time import perf_counter
 
@@ -15,10 +16,16 @@ from app.routers.auth import get_current_user
 from app.schemas import AskRequest, AskResponse
 from app.hybrid_search import (
     build_vector_filter,
+    extract_keyword_terms,
     get_retrieval_method,
     hybrid_search,
 )
 from app.monitoring import record_request_metric
+from app.memory import (
+    build_memory_context,
+    finalize_conversation_memory,
+    remember_explicit_user_facts,
+)
 from app.source_metadata import needs_source_review
 from app.vector_store import (
     RAG_RETRIEVAL_FETCH_COUNT,
@@ -46,12 +53,19 @@ URGENT_WARNING_KEYWORDS = (
 )
 
 DIRECT_LOOKUP_KEYWORDS = (
+    "哪份",
     "哪份资料",
     "什么资料",
     "哪个资料",
+    "哪条资料",
+    "哪条病症资料",
     "哪篇资料",
     "哪个专科",
+    "哪个内科",
+    "哪个外科",
     "哪个科",
+    "哪种病症",
+    "什么病症",
     "哪个概览",
     "查什么",
     "看什么",
@@ -63,6 +77,7 @@ DIRECT_LOOKUP_KEYWORDS = (
 DRUG_QUESTION_KEYWORDS = (
     "药物",
     "药品",
+    "用药",
     "怎么用",
     "如何用",
     "服用",
@@ -70,6 +85,12 @@ DRUG_QUESTION_KEYWORDS = (
     "注意事项",
     "药效",
     "作用",
+)
+DOCUMENT_CONTENT_QUESTION_MARKERS = (
+    "资料中",
+    "概览中",
+    "资料对",
+    "概览对",
 )
 SYMPTOM_QUESTION_KEYWORDS = (
     "怎么办",
@@ -197,17 +218,32 @@ def build_answer_mode_instruction(question: str) -> str:
     real evaluation failures without adding another model call.
     """
     normalized_question = question.replace(" ", "")
+    requested_page = get_requested_page_number(question)
+    if requested_page is not None:
+        return (
+            f"页码定位模式：只回答用户指定的第 {requested_page} 页资料。"
+            "第一句用一句话概括该页的主要内容；随后最多列出 3 个该页已有的重点。"
+            "不得补充其他页、其他药物或其他资料的内容。"
+        )
     if any(keyword in normalized_question for keyword in DIRECT_LOOKUP_KEYWORDS):
         return (
-            "资料定位模式：第一句必须直接回答用户要找的资料标题、专科或说明，"
-            "例如“建议优先查看《资料标题》”或“该问题对应某某专科”。"
-            "随后最多补充 2 至 3 条和问题直接相关的资料要点。"
-            "不要使用固定的“三个部分”标题，也不要先说泛化建议。"
+            "资料定位模式：第一句必须写“推荐资料：《资料标题》”，并直接给出用户要找的"
+            "资料标题或专科；其中“资料标题”必须使用本次检索到的第一份资料的真实标题。"
+            "随后最多用 1 句话说明该资料为何匹配问题。"
+            "除非用户明确要求比较，否则不得列举其他资料、泛化建议或固定免责声明。"
+        )
+    if is_document_content_question(question):
+        return (
+            "资料内容模式：第一句必须写“《资料标题》提示：”，并直接回答问题；"
+            "其中“资料标题”必须使用本次检索到的真实标题。"
+            "整段最多 2 句话，只保留该资料中与问题关键词直接相关的内容。"
+            "不要追加泛化建议、重复就医提示或固定免责声明。"
         )
     if any(keyword in normalized_question for keyword in DRUG_QUESTION_KEYWORDS):
         return (
-            "药物说明模式：第一句直接说明资料中该药物的作用或用户所问的核心结论，"
-            "随后列出 2 至 4 条资料中已有的使用说明或注意事项。"
+            "药物说明模式：第一句只直接回答用户所问的药物作用或使用前说明。"
+            "随后最多补充 2 条与该问题直接相关的资料要点。"
+            "不得列举其他药物、泛化的疾病信息或与问题无关的警示。"
             "不要提供资料中没有的剂量、疗程或治疗方案。"
         )
     if any(keyword in normalized_question for keyword in SYMPTOM_QUESTION_KEYWORDS):
@@ -217,9 +253,15 @@ def build_answer_mode_instruction(question: str) -> str:
             "第一部分只能客观列出资料中的信息，不得把用户症状和疾病建立联系。"
         )
     return (
-        "知识问答模式：第一句先直接回答问题，再用 2 至 4 条资料要点补充。"
-        "不需要使用固定的“三个部分”标题；安全提示只在资料确有相关内容时简短给出。"
+        "知识问答模式：第一句先直接回答问题，再用最多 2 条资料要点补充。"
+        "整段回答最多 3 句话，不得重复相同信息，也不得为展示完整性加入无关背景或安全提示。"
     )
+
+
+def get_requested_page_number(question: str) -> int | None:
+    """Return a requested document page number when the question names one."""
+    match = re.search(r"第\s*(\d{1,4})\s*页", question)
+    return int(match.group(1)) if match is not None else None
 
 
 def retrieval_labels(matches: list[tuple[object, float]]) -> tuple[str, str]:
@@ -263,22 +305,283 @@ def select_title_matched_documents(
     question: str,
     relevant_matches: list[tuple[object, float]],
 ) -> list[tuple[object, float]]:
-    """Prefer documents whose explicit disease title appears in the question.
+    """Select the focused context for explicit document-location questions.
 
-    Vector similarity can group together unrelated documents that share terms
-    such as "warning" or "seek medical care".  A direct title match is a
-    stronger intent signal, while questions without such a match keep the
-    normal multi-document retrieval behavior.
+    An exact title match is stronger than retrieval rank. When a user asks for
+    one source but does not write its title, the top hybrid result is the best
+    available choice. Matching arbitrary two-character title fragments caused
+    false positives such as "问题" and "需要", which replaced correct results.
     """
-    normalized_question = question.casefold()
+    normalized_question = re.sub(r"\s+", "", question.casefold())
+    if is_condition_lookup_question(question):
+        condition_matches = [
+            match
+            for match in relevant_matches
+            if str(getattr(match[0], "metadata", {}).get("type", "")) == "condition"
+        ]
+        if condition_matches:
+            return condition_matches[:1]
+    if is_specialty_overview_lookup_question(question):
+        specialty_matches = [
+            match
+            for match in relevant_matches
+            if is_specialty_overview_title(
+                str(getattr(match[0], "metadata", {}).get("name", ""))
+            )
+        ]
+        if specialty_matches:
+            return specialty_matches[:1]
     title_matches = [
         match
         for match in relevant_matches
-        if str(match[0].metadata.get("type", "")) == "document"
-        and str(match[0].metadata.get("name", "")).split("：", 1)[0].casefold()
-        in normalized_question
+        if _record_title_matches_question(
+            str(getattr(match[0], "metadata", {}).get("name", "")),
+            normalized_question,
+        )
     ]
-    return title_matches or relevant_matches
+    if title_matches:
+        return title_matches
+    if is_explicit_document_lookup_question(question):
+        return relevant_matches[:1]
+    return relevant_matches
+
+
+def is_explicit_document_lookup_question(question: str) -> bool:
+    """Return whether the user explicitly asks us to locate a source."""
+    normalized_question = re.sub(r"\s+", "", question.casefold())
+    return (
+        get_requested_page_number(question) is not None
+        or any(keyword in normalized_question for keyword in DIRECT_LOOKUP_KEYWORDS)
+    )
+
+
+def is_pure_document_lookup_question(question: str) -> bool:
+    """Return whether a question only asks us to identify one source."""
+    normalized_question = re.sub(r"\s+", "", question.casefold())
+    if get_requested_page_number(question) is not None:
+        return False
+    return any(
+        keyword in normalized_question
+        for keyword in (
+            "哪份",
+            "哪个",
+            "哪条",
+            "哪篇",
+            "哪种病症",
+            "什么病症",
+            "检索哪种",
+            "查哪",
+            "看哪",
+        )
+    )
+
+
+def is_document_content_question(question: str) -> bool:
+    """Return whether the user has already named a source and asks its content."""
+    normalized_question = re.sub(r"\s+", "", question.casefold())
+    return any(marker in normalized_question for marker in DOCUMENT_CONTENT_QUESTION_MARKERS)
+
+
+def _source_text_lines(document: object) -> list[str]:
+    page_content = str(getattr(document, "page_content", ""))
+    lines: list[str] = []
+    for raw_line in re.split(r"[\n。；]", page_content):
+        line = raw_line.strip().lstrip("#-0123456789. ")
+        if not line or line.startswith(
+            ("资料标题：", "资料来源：", "来源：", "药物名称：", "病症名称：")
+        ):
+            continue
+        for label in ("资料内容：", "常见症状：", "处理建议：", "药物作用：", "使用说明："):
+            if line.startswith(label):
+                line = line.removeprefix(label).strip()
+                break
+        lines.append(line)
+    return lines
+
+
+def build_grounded_lookup_reason(question: str, document: object) -> str | None:
+    """Extract one source-backed line explaining why a source was selected."""
+    terms = [term for term in extract_keyword_terms(question) if len(term) >= 2]
+    candidates: list[tuple[int, str]] = []
+    for line in _source_text_lines(document):
+        normalized_line = re.sub(r"\s+", "", line.casefold())
+        matched_terms = {term for term in terms if term in normalized_line}
+        if not matched_terms:
+            continue
+        score = sum(min(len(term), 8) for term in matched_terms)
+        candidates.append((score, line))
+    if not candidates:
+        return None
+    _, selected_line = max(candidates, key=lambda item: (item[0], -len(item[1])))
+    return selected_line[:180].rstrip("。；，")
+
+
+def build_lookup_subject(reason: str) -> str:
+    """Keep the source-backed clue that should lead a user to this source."""
+    subject = reason.split("：", 1)[-1]
+    subject = subject.split("，", 1)[0].strip()
+    for prefix in ("常见", "可能伴", "可能有", "可有", "出现"):
+        if subject.startswith(prefix):
+            subject = subject.removeprefix(prefix)
+            break
+    subject = subject.rstrip("。；，")
+    for suffix in ("等表现", "表现", "等症状", "症状"):
+        if subject.endswith(suffix):
+            return subject[: -len(suffix)].rstrip("、，")
+    return subject
+
+
+def build_document_lookup_answer(
+    question: str,
+    references: list[dict],
+    relevant_documents: list[object],
+) -> str:
+    """Answer source-selection questions from the selected source, without an LLM."""
+    title = str(references[0].get("name", "相关资料"))
+    reason = build_grounded_lookup_reason(question, relevant_documents[0])
+    if reason:
+        subject = build_lookup_subject(reason)
+        if subject:
+            return (
+                f"{subject}等相关表现可查看《{title}》。"
+                f"资料中提到：{reason}。"
+            )
+        return f"资料中提到：{reason}。推荐查看《{title}》。"
+    return f"推荐资料：《{title}》。"
+
+
+def _extract_labeled_document_value(document: object, label: str) -> str:
+    page_content = str(getattr(document, "page_content", ""))
+    match = re.search(rf"{re.escape(label)}：([^\n]+)", page_content)
+    return match.group(1).strip() if match is not None else ""
+
+
+def build_structured_drug_answer(
+    question: str,
+    relevant_documents: list[object],
+) -> str | None:
+    """Answer exact drug questions from the structured source fields directly."""
+    normalized_question = re.sub(r"\s+", "", question.casefold())
+    drug_document = next(
+        (
+            document
+            for document in relevant_documents
+            if str(getattr(document, "metadata", {}).get("type", "")) == "drug"
+        ),
+        None,
+    )
+    if drug_document is None:
+        return None
+
+    name = str(getattr(drug_document, "metadata", {}).get("name", "该药物"))
+    if not (
+        any(keyword in normalized_question for keyword in DRUG_QUESTION_KEYWORDS)
+        or (
+            name.casefold() in normalized_question
+            and any(marker in normalized_question for marker in ("资料", "说明", "用前"))
+        )
+    ):
+        return None
+    effects = _extract_labeled_document_value(drug_document, "药物作用")
+    instructions = _extract_labeled_document_value(drug_document, "使用说明")
+    if not effects:
+        return None
+
+    answer = f"{name}的作用：{effects}。"
+    if instructions:
+        answer += f"使用提示：{instructions}。"
+    return answer
+
+
+def build_deterministic_answer(
+    question: str,
+    references: list[dict],
+    relevant_documents: list[object],
+) -> str | None:
+    """Use source fields directly when generation would add no value."""
+    drug_answer = build_structured_drug_answer(question, relevant_documents)
+    if drug_answer is not None:
+        return drug_answer
+    if is_pure_document_lookup_question(question):
+        return build_document_lookup_answer(
+            question,
+            references,
+            relevant_documents,
+        )
+    return None
+
+
+def is_specialty_overview_lookup_question(question: str) -> bool:
+    """Return whether the user asks which medical specialty overview to read."""
+    normalized_question = re.sub(r"\s+", "", question.casefold())
+    return any(
+        keyword in normalized_question
+        for keyword in (
+            "哪个专科",
+            "哪个内科",
+            "哪个外科",
+            "哪个科",
+            "专科概览",
+            "外科概览",
+        )
+    )
+
+
+def is_condition_lookup_question(question: str) -> bool:
+    """Return whether the user asks us to choose a structured condition record."""
+    normalized_question = re.sub(r"\s+", "", question.casefold())
+    return any(
+        keyword in normalized_question
+        for keyword in (
+            "哪条病症",
+            "哪种病症",
+            "哪个病症",
+            "什么病症",
+            "检索哪种",
+        )
+    )
+
+
+def is_specialty_overview_title(title: str) -> bool:
+    normalized_title = re.sub(r"\s+", "", title.casefold())
+    return "科" in normalized_title and "概览" in normalized_title
+
+
+def _record_title_matches_question(
+    title: str,
+    normalized_question: str,
+) -> bool:
+    normalized_title = re.sub(r"\s+", "", title.casefold())
+    direct_title = normalized_title.split("：", 1)[0]
+    return len(direct_title) >= 2 and direct_title in normalized_question
+
+
+def select_page_matched_documents(
+    question: str,
+    relevant_matches: list[tuple[object, float]],
+) -> list[tuple[object, float]]:
+    """Keep only the requested page when a user explicitly asks about one."""
+    requested_page = get_requested_page_number(question)
+    if requested_page is None:
+        return relevant_matches
+
+    page_matches = [
+        match
+        for match in relevant_matches
+        if str(getattr(match[0], "metadata", {}).get("type", "")) == "document"
+        and _document_page_number(match[0]) == requested_page
+    ]
+    return page_matches or relevant_matches
+
+
+def _document_page_number(document: object) -> int | None:
+    metadata = getattr(document, "metadata", {})
+    page_number = parse_metadata_int(metadata.get("page_number"), 1)
+    if page_number is not None:
+        return page_number
+    name = str(metadata.get("name", ""))
+    match = re.search(r"第\s*(\d{1,4})\s*页", name)
+    return int(match.group(1)) if match is not None else None
 
 
 def parse_metadata_datetime(value: object) -> datetime | None:
@@ -416,9 +719,10 @@ def build_source_limitations(references: list[dict]) -> str:
     if any(reference["needs_review"] for reference in references):
         return (
             "部分参考资料的来源待核实、未记录更新时间或已超过一年未更新。"
-            "回答中必须明确提示这项限制，不能把这些资料表述为确定的医疗结论。"
+            "这项状态会展示在引用信息中；只有用户询问资料可靠性、准备据此作重要"
+            "医疗决策，或资料不足时，才在回答正文说明这项限制。"
         )
-    return "参考资料已标注来源和更新时间，但仍只能作为健康信息参考。"
+    return "参考资料已标注来源和更新时间。"
 
 
 def build_response_metadata(
@@ -477,8 +781,8 @@ def build_rag_answer_prompt() -> ChatPromptTemplate:
                 "资料可靠性提示：{source_limitations}\n"
                 "本次检索到的资料标题：{reference_names}\n"
                 "当前回答方式：{answer_mode}\n"
-                "无论回答方式如何，结尾保留一条简短提醒：内容仅供健康信息参考，"
-                "不代替医生诊断或处方。",
+                "只在资料不足、用户描述紧急风险，或当前回答方式明确要求时补充安全提醒；"
+                "不要对每次回答机械追加固定免责声明。",
             ),
             (
                 "human",
@@ -543,6 +847,7 @@ def run_rag_answer_pipeline(
 
     relevant_matches = select_distinct_relevant_matches(matches)
     relevant_matches = select_title_matched_documents(question, relevant_matches)
+    relevant_matches = select_page_matched_documents(question, relevant_matches)
     relevant_documents = [document for document, _ in relevant_matches]
     if not relevant_documents:
         metadata = build_response_metadata(
@@ -562,20 +867,29 @@ def run_rag_answer_pipeline(
 
     context = "\n\n".join(document.page_content for document in relevant_documents)
     references = build_references(relevant_matches)
-    reference_names = "、".join(reference["name"] for reference in references)
-    try:
-        response = get_chat_model().invoke(
-            build_rag_answer_prompt().format_messages(
-                context=context,
-                history=history_text,
-                question=question,
-                source_limitations=build_source_limitations(references),
-                reference_names=reference_names,
-                answer_mode=build_answer_mode_instruction(question),
+    direct_answer = build_deterministic_answer(
+        question,
+        references,
+        relevant_documents,
+    )
+    if direct_answer is not None:
+        answer = direct_answer
+    else:
+        reference_names = "、".join(reference["name"] for reference in references)
+        try:
+            response = get_chat_model().invoke(
+                build_rag_answer_prompt().format_messages(
+                    context=context,
+                    history=history_text,
+                    question=question,
+                    source_limitations=build_source_limitations(references),
+                    reference_names=reference_names,
+                    answer_mode=build_answer_mode_instruction(question),
+                )
             )
-        )
-    except Exception as error:
-        raise RuntimeError("模型暂时不可用，请检查 CHAT_MODEL 和 API 配置") from error
+            answer = str(response.content)
+        except Exception as error:
+            raise RuntimeError("模型暂时不可用，请检查 CHAT_MODEL 和 API 配置") from error
 
     retrieval_source, retrieval_path = retrieval_labels(relevant_matches)
     metadata = build_response_metadata(
@@ -588,7 +902,7 @@ def run_rag_answer_pipeline(
         started_at=started_at,
     )
     return {
-        "answer": str(response.content),
+        "answer": answer,
         "contexts": [document.page_content for document in relevant_documents],
         **metadata,
     }
@@ -602,25 +916,20 @@ def ask_question(
 ):
     """同时使用 MySQL 关键词检索和 Milvus 向量检索获取资料。"""
     started_at = perf_counter()
-    history = session.exec(
-        select(ChatMessage)
-        .where(ChatMessage.conversation_id == request.conversation_id)
-        .where(
-            (ChatMessage.user_id == current_user.id)
-            if not current_user.is_admin
-            else True
-        )
-        .order_by(ChatMessage.created_at.desc())
-        .limit(10)
-    ).all()
-    history.reverse()
-    history_text = "\n".join(
-        f"{message.role}: {message.content}"
-        for message in history
-    ) or "暂无历史对话"
+    remember_explicit_user_facts(
+        session,
+        current_user,
+        request.question,
+        request.conversation_id,
+    )
+    history_text, retrieval_memory_context = build_memory_context(
+        session,
+        current_user,
+        request.conversation_id,
+    )
     retrieval_query = (
-        f"{history_text}\n当前问题：{request.question}"
-        if history
+        f"{retrieval_memory_context}\n当前问题：{request.question}"
+        if retrieval_memory_context != "暂无历史对话"
         else request.question
     )
 
@@ -652,6 +961,11 @@ def ask_question(
             user_id=current_user.id,
         )
         session.flush()
+        finalize_conversation_memory(
+            session,
+            current_user,
+            request.conversation_id,
+        )
         record_request_metric(
             session,
             user_id=current_user.id,
@@ -733,6 +1047,10 @@ def ask_question(
         request.question,
         relevant_matches,
     )
+    relevant_matches = select_page_matched_documents(
+        request.question,
+        relevant_matches,
+    )
     relevant_documents = [document for document, _ in relevant_matches]
 
     if not relevant_documents:
@@ -762,6 +1080,11 @@ def ask_question(
             user_id=current_user.id,
         )
         session.flush()
+        finalize_conversation_memory(
+            session,
+            current_user,
+            request.conversation_id,
+        )
         record_request_metric(
             session,
             user_id=current_user.id,
@@ -795,40 +1118,46 @@ def ask_question(
         for document in relevant_documents
     )
     references = build_references(relevant_matches)
-    reference_names = "、".join(reference["name"] for reference in references)
-
-    prompt = build_rag_answer_prompt()
-
-    try:
-        response = get_chat_model().invoke(
-            prompt.format_messages(
-                context=context,
-                history=history_text,
-                question=request.question,
-                source_limitations=build_source_limitations(references),
-                reference_names=reference_names,
-                answer_mode=build_answer_mode_instruction(request.question),
+    direct_answer = build_deterministic_answer(
+        request.question,
+        references,
+        relevant_documents,
+    )
+    if direct_answer is not None:
+        answer = direct_answer
+    else:
+        reference_names = "、".join(reference["name"] for reference in references)
+        prompt = build_rag_answer_prompt()
+        try:
+            response = get_chat_model().invoke(
+                prompt.format_messages(
+                    context=context,
+                    history=history_text,
+                    question=request.question,
+                    source_limitations=build_source_limitations(references),
+                    reference_names=reference_names,
+                    answer_mode=build_answer_mode_instruction(request.question),
+                )
             )
-        )
-        answer = str(response.content)
-    except Exception as error:
-        record_request_metric(
-            session,
-            user_id=current_user.id,
-            endpoint="ask",
-            success=False,
-            status_code=503,
-            request_type="rag",
-            processing_path="generation-error",
-            retrieved_count=len(relevant_documents),
-            latency_ms=round((perf_counter() - started_at) * 1000),
-            error_type="generation_error",
-        )
-        session.commit()
-        raise HTTPException(
-            status_code=503,
-            detail="模型暂时不可用，请检查 CHAT_MODEL 和 API 配置",
-        ) from error
+            answer = str(response.content)
+        except Exception as error:
+            record_request_metric(
+                session,
+                user_id=current_user.id,
+                endpoint="ask",
+                success=False,
+                status_code=503,
+                request_type="rag",
+                processing_path="generation-error",
+                retrieved_count=len(relevant_documents),
+                latency_ms=round((perf_counter() - started_at) * 1000),
+                error_type="generation_error",
+            )
+            session.commit()
+            raise HTTPException(
+                status_code=503,
+                detail="模型暂时不可用，请检查 CHAT_MODEL 和 API 配置",
+            ) from error
 
     retrieval_source, retrieval_path = retrieval_labels(relevant_matches)
     metadata = build_response_metadata(
@@ -856,6 +1185,11 @@ def ask_question(
         user_id=current_user.id,
     )
     session.flush()
+    finalize_conversation_memory(
+        session,
+        current_user,
+        request.conversation_id,
+    )
     record_request_metric(
         session,
         user_id=current_user.id,
@@ -894,25 +1228,20 @@ def stream_answer(
 ) -> StreamingResponse:
     """Use SSE to return answer chunks while preserving the normal RAG rules."""
     started_at = perf_counter()
-    history = session.exec(
-        select(ChatMessage)
-        .where(ChatMessage.conversation_id == request.conversation_id)
-        .where(
-            (ChatMessage.user_id == current_user.id)
-            if not current_user.is_admin
-            else True
-        )
-        .order_by(ChatMessage.created_at.desc())
-        .limit(10)
-    ).all()
-    history.reverse()
-    history_text = "\n".join(
-        f"{message.role}: {message.content}"
-        for message in history
-    ) or "暂无历史对话"
+    remember_explicit_user_facts(
+        session,
+        current_user,
+        request.question,
+        request.conversation_id,
+    )
+    history_text, retrieval_memory_context = build_memory_context(
+        session,
+        current_user,
+        request.conversation_id,
+    )
     retrieval_query = (
-        f"{history_text}\n当前问题：{request.question}"
-        if history
+        f"{retrieval_memory_context}\n当前问题：{request.question}"
+        if retrieval_memory_context != "暂无历史对话"
         else request.question
     )
 
@@ -944,6 +1273,11 @@ def stream_answer(
                 user_id=current_user.id,
             )
             session.flush()
+            finalize_conversation_memory(
+                session,
+                current_user,
+                request.conversation_id,
+            )
             record_request_metric(
                 session,
                 user_id=current_user.id,
@@ -1027,6 +1361,10 @@ def stream_answer(
         request.question,
         relevant_matches,
     )
+    relevant_matches = select_page_matched_documents(
+        request.question,
+        relevant_matches,
+    )
     relevant_documents = [document for document, _ in relevant_matches]
 
     if not relevant_documents:
@@ -1058,6 +1396,11 @@ def stream_answer(
                 user_id=current_user.id,
             )
             session.flush()
+            finalize_conversation_memory(
+                session,
+                current_user,
+                request.conversation_id,
+            )
             record_request_metric(
                 session,
                 user_id=current_user.id,
@@ -1090,17 +1433,23 @@ def stream_answer(
 
     context = "\n\n".join(document.page_content for document in relevant_documents)
     references = build_references(relevant_matches)
-    reference_names = "、".join(reference["name"] for reference in references)
     retrieval_source, retrieval_path = retrieval_labels(relevant_matches)
-    prompt = build_rag_answer_prompt()
-    messages = prompt.format_messages(
-        context=context,
-        history=history_text,
-        question=request.question,
-        source_limitations=build_source_limitations(references),
-        reference_names=reference_names,
-        answer_mode=build_answer_mode_instruction(request.question),
+    direct_answer = build_deterministic_answer(
+        request.question,
+        references,
+        relevant_documents,
     )
+    messages = None
+    if direct_answer is None:
+        reference_names = "、".join(reference["name"] for reference in references)
+        messages = build_rag_answer_prompt().format_messages(
+            context=context,
+            history=history_text,
+            question=request.question,
+            source_limitations=build_source_limitations(references),
+            reference_names=reference_names,
+            answer_mode=build_answer_mode_instruction(request.question),
+        )
 
     def answer_event_stream():
         initial_metadata = build_response_metadata(
@@ -1117,32 +1466,36 @@ def stream_answer(
             initial_metadata,
         )
         answer_parts: list[str] = []
-        try:
-            for chunk in get_chat_model().stream(messages):
-                text = get_stream_text(chunk)
-                if not text:
-                    continue
-                answer_parts.append(text)
-                yield format_sse_event("token", {"text": text})
-        except Exception:
-            record_request_metric(
-                session,
-                user_id=current_user.id,
-                endpoint="ask/stream",
-                success=False,
-                status_code=503,
-                request_type="rag",
-                processing_path="generation-error",
-                retrieved_count=len(relevant_documents),
-                latency_ms=round((perf_counter() - started_at) * 1000),
-                error_type="generation_error",
-            )
-            session.commit()
-            yield format_sse_event(
-                "error",
-                {"detail": "模型暂时不可用，请检查 CHAT_MODEL 和 API 配置"},
-            )
-            return
+        if direct_answer is not None:
+            answer_parts.append(direct_answer)
+            yield format_sse_event("token", {"text": direct_answer})
+        else:
+            try:
+                for chunk in get_chat_model().stream(messages):
+                    text = get_stream_text(chunk)
+                    if not text:
+                        continue
+                    answer_parts.append(text)
+                    yield format_sse_event("token", {"text": text})
+            except Exception:
+                record_request_metric(
+                    session,
+                    user_id=current_user.id,
+                    endpoint="ask/stream",
+                    success=False,
+                    status_code=503,
+                    request_type="rag",
+                    processing_path="generation-error",
+                    retrieved_count=len(relevant_documents),
+                    latency_ms=round((perf_counter() - started_at) * 1000),
+                    error_type="generation_error",
+                )
+                session.commit()
+                yield format_sse_event(
+                    "error",
+                    {"detail": "模型暂时不可用，请检查 CHAT_MODEL 和 API 配置"},
+                )
+                return
 
         answer = "".join(answer_parts).strip()
         if not answer:
@@ -1186,6 +1539,11 @@ def stream_answer(
             user_id=current_user.id,
         )
         session.flush()
+        finalize_conversation_memory(
+            session,
+            current_user,
+            request.conversation_id,
+        )
         record_request_metric(
             session,
             user_id=current_user.id,

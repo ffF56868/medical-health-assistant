@@ -135,6 +135,43 @@ class RAGEvaluationCase(SQLModel, table=True):
     )
 
 
+class ConversationMemoryState(SQLModel, table=True):
+    """Compressed state for one user's conversation."""
+
+    id: int | None = Field(default=None, primary_key=True)
+    user_id: int = Field(index=True)
+    conversation_id: str = Field(index=True, max_length=100)
+    summary: str = Field(default="", sa_type=Text)
+    summarized_message_count: int = Field(default=0)
+    updated_at: datetime = Field(
+        default_factory=lambda: datetime.now(UTC),
+        index=True,
+    )
+
+
+class UserMemory(SQLModel, table=True):
+    """Explicit, user-owned long-term memory items."""
+
+    id: int | None = Field(default=None, primary_key=True)
+    user_id: int = Field(index=True)
+    memory_key: str = Field(max_length=50, index=True)
+    content: str = Field(sa_type=Text)
+    importance: float = Field(default=0.0, index=True)
+    embedding_json: str = Field(default="[]", sa_type=Text)
+    active: bool = Field(default=True, index=True)
+    source_conversation_id: str | None = Field(default=None, max_length=100)
+    created_at: datetime = Field(
+        default_factory=lambda: datetime.now(UTC),
+        index=True,
+    )
+    updated_at: datetime = Field(
+        default_factory=lambda: datetime.now(UTC),
+        index=True,
+    )
+    last_accessed_at: datetime | None = None
+    access_count: int = Field(default=0)
+
+
 class RAGEvaluationRun(SQLModel, table=True):
     id: int | None = Field(default=None, primary_key=True)
     total_count: int

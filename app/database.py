@@ -67,6 +67,18 @@ SQLITE_COLUMN_MIGRATIONS = {
         "user_id": "INTEGER",
         "response_metadata_json": "TEXT NOT NULL DEFAULT '{}'",
     },
+    "conversationmemorystate": {
+        "summary": "TEXT",
+        "summarized_message_count": "INTEGER NOT NULL DEFAULT 0",
+        "updated_at": "DATETIME",
+    },
+    "usermemory": {
+        "embedding_json": "TEXT",
+        "active": "BOOLEAN NOT NULL DEFAULT 1",
+        "source_conversation_id": "VARCHAR(100)",
+        "last_accessed_at": "DATETIME",
+        "access_count": "INTEGER NOT NULL DEFAULT 0",
+    },
     "knowledgerebuildjob": {
         "retry_of_job_id": "INTEGER",
     },

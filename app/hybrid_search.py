@@ -24,6 +24,39 @@ from app.source_metadata import needs_source_review
 KEYWORD_FETCH_COUNT = 8
 VECTOR_WEIGHT = 0.65
 KEYWORD_WEIGHT = 0.35
+PRIORITY_MEDICAL_TERMS = (
+    "对乙酰氨基酚",
+    "阿莫西林",
+    "布洛芬",
+    "反酸",
+    "吞咽困难",
+    "呼吸困难",
+    "意识改变",
+    "血小板",
+    "白细胞",
+    "淋巴结",
+    "对青霉素过敏",
+    "胸痛",
+    "昏迷",
+    "外伤",
+    "肿胀",
+    "畸形",
+    "不能负重",
+    "肢体麻木",
+    "头晕",
+    "头痛",
+    "言语不清",
+    "视物异常",
+    "平衡障碍",
+    "急症",
+    "急诊",
+    "贫血",
+    "出血",
+    "瘀斑",
+    "血液",
+    "骨髓",
+)
+PRIORITY_TERM_SCORE_WEIGHT = 0.30
 
 SEARCH_STOP_WORDS = {
     "什么",
@@ -101,6 +134,16 @@ def _is_generic_title_fragment(term: str) -> bool:
     return any(term in phrase for phrase in GENERIC_TITLE_PHRASES)
 
 
+def get_priority_medical_terms(query: str) -> list[str]:
+    """Keep short clinical clues when a long Chinese question is not segmented."""
+    normalized_query = _normalize_text(query)
+    return [
+        term
+        for term in PRIORITY_MEDICAL_TERMS
+        if term in normalized_query
+    ]
+
+
 def extract_keyword_terms(query: str) -> list[str]:
     """Extract useful terms from both spaced and unspaced Chinese questions.
 
@@ -138,9 +181,16 @@ def extract_keyword_terms(query: str) -> list[str]:
         elif len(token) >= 2 or token.isdigit():
             terms.add(token)
 
-    # Longer terms are more informative. A bounded list also protects the
-    # database query when a user pastes a long paragraph as the question.
-    return sorted(terms, key=lambda term: (-len(term), term))[:60]
+    # Longer terms are normally more informative. A bounded list also protects
+    # the database query when a user pastes a long paragraph as the question.
+    # Keep reviewed medical clues first so unsegmented text does not drop terms
+    # such as "贫血" and "瘀斑" before retrieval begins.
+    priority_terms = get_priority_medical_terms(query)
+    remaining_terms = sorted(
+        terms.difference(priority_terms),
+        key=lambda term: (-len(term), term),
+    )
+    return [*priority_terms, *remaining_terms][:60]
 
 
 def _contains_any(fields: list[object], terms: list[str]):
@@ -177,6 +227,7 @@ def _build_record_document(
     record_type: str,
     matched_fields: list[str],
     score: float,
+    priority_match_ratio: float = 0.0,
 ) -> Document:
     if record_type == "condition":
         title = record.name
@@ -216,6 +267,7 @@ def _build_record_document(
         "retrieval_method": "keyword",
         "keyword_score": round(score, 4),
         "keyword_fields": "|".join(matched_fields),
+        "keyword_priority_match_ratio": round(priority_match_ratio, 4),
     }
     if record_type == "document":
         metadata["page_number"] = record.page_number or 0
@@ -225,7 +277,7 @@ def _build_record_document(
 def _score_record(
     fields: dict[str, str],
     terms: list[str],
-) -> tuple[float, list[str]]:
+) -> tuple[float, list[str], float]:
     normalized_fields = {
         field_name: _normalize_text(value)
         for field_name, value in fields.items()
@@ -236,7 +288,7 @@ def _score_record(
         if any(term in value for term in terms)
     ]
     if not matched_fields:
-        return 0.0, []
+        return 0.0, [], 0.0
 
     matched_terms = {
         term
@@ -262,9 +314,28 @@ def _score_record(
     # A name/title hit is the strongest exact signal; field coverage adds a
     # smaller bonus without allowing a long pasted question to dominate.
     if title_match and exact_title_term:
-        return 1.0, matched_fields
-    score = (0.75 if title_match else 0.45) + min(0.25, coverage)
-    return min(1.0, score), matched_fields
+        return 1.0, matched_fields, 1.0
+    priority_terms = [
+        term
+        for term in terms
+        if term in PRIORITY_MEDICAL_TERMS
+    ]
+    priority_match_ratio = (
+        sum(
+            len(term)
+            for term in priority_terms
+            if any(term in value for value in normalized_fields.values())
+        )
+        / max(1, sum(len(term) for term in priority_terms))
+        if priority_terms
+        else 0.0
+    )
+    score = (
+        (0.75 if title_match else 0.45)
+        + min(0.25, coverage)
+        + PRIORITY_TERM_SCORE_WEIGHT * priority_match_ratio
+    )
+    return min(1.0, score), matched_fields, priority_match_ratio
 
 
 def keyword_search(
@@ -343,7 +414,10 @@ def keyword_search(
                 field_name: getattr(record, field_name_source.key)
                 for field_name, field_name_source in fields.items()
             }
-            score, matched_fields = _score_record(text_fields, terms)
+            score, matched_fields, priority_match_ratio = _score_record(
+                text_fields,
+                terms,
+            )
             if score <= 0:
                 continue
             matches.append(
@@ -353,6 +427,7 @@ def keyword_search(
                         record_type,
                         matched_fields,
                         score,
+                        priority_match_ratio,
                     ),
                     score=score,
                 )
@@ -406,6 +481,9 @@ def merge_retrieval_matches(
         if match.score > float(item.get("keyword_score", 0.0)):
             item["keyword_score"] = match.score
             item["keyword_document"] = match.document
+            item["keyword_priority_match_ratio"] = _safe_score(
+                match.document.metadata.get("keyword_priority_match_ratio")
+            )
 
     merged: list[tuple[Document, float]] = []
     for item in grouped.values():
@@ -433,6 +511,10 @@ def merge_retrieval_matches(
                 "retrieval_method": method,
                 "vector_score": round(vector_score, 4),
                 "keyword_score": round(keyword_score, 4),
+                "keyword_priority_match_ratio": round(
+                    float(item.get("keyword_priority_match_ratio", 0.0)),
+                    4,
+                ),
             }
         )
         merged.append(

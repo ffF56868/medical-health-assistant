@@ -27,6 +27,7 @@ from app.routers import (
     feedback,
     knowledge,
     monitoring,
+    memory,
 )
 from app.schemas import HealthResponse
 from app.vector_store import get_knowledge_status
@@ -102,4 +103,5 @@ app.include_router(documents.router)
 app.include_router(feedback.router)
 app.include_router(evaluation.router)
 app.include_router(monitoring.router)
+app.include_router(memory.router)
 app.include_router(auth.router)

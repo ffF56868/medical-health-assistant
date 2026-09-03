@@ -26,6 +26,47 @@ def test_extract_keyword_terms_ignores_generic_specialty_overview_title_parts():
     assert "就医警示" not in terms
 
 
+def test_extract_keyword_terms_keeps_short_high_signal_clinical_clues():
+    terms = extract_keyword_terms("反复出血、瘀斑或贫血相关问题属于哪个专科概览？")
+
+    assert {"出血", "瘀斑", "贫血"}.issubset(terms)
+
+
+def test_extract_keyword_terms_keeps_specialty_routing_clues():
+    terms = extract_keyword_terms("外伤后肿胀、畸形、不能负重应查询哪个专科？")
+
+    assert {"外伤", "肿胀", "畸形", "不能负重"}.issubset(terms)
+
+
+def test_keyword_search_prioritizes_a_record_covering_multiple_clinical_clues(
+    test_engine,
+):
+    with Session(test_engine) as session:
+        session.add_all(
+            [
+                KnowledgeDocument(
+                    title="血液科常见病概览",
+                    content="反复出血、皮下瘀斑和贫血需要进行血液科评估。",
+                ),
+                KnowledgeDocument(
+                    title="肿瘤科常见就诊警示概览",
+                    content="异常出血需要医学评估。",
+                ),
+            ]
+        )
+        session.commit()
+
+        matches = keyword_search(
+            session,
+            "反复出血、瘀斑或贫血相关问题属于哪个专科概览？",
+            knowledge_type="document",
+            source_filter="all",
+        )
+
+    assert matches[0].document.metadata["name"] == "血液科常见病概览"
+    assert matches[0].document.metadata["keyword_priority_match_ratio"] == 1
+
+
 def test_keyword_search_respects_type_and_private_document_access(test_engine):
     with Session(test_engine) as session:
         session.add(
