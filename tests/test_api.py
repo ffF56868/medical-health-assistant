@@ -393,6 +393,97 @@ def test_ragas_task_defaults_to_ten_sampled_cases(client, monkeypatch):
     assert history_response.json()["runs"][0]["id"] == data["id"]
 
 
+def test_ragas_task_persists_the_selected_retrieval_strategy(client, monkeypatch):
+    case = {
+        "case_id": "ragas-no-retrieval-case",
+        "case_source": "测试题",
+        "question": "没有检索时的测试问题",
+        "expected_name": "测试资料",
+        "expected_type": "document",
+        "category": "测试",
+    }
+    monkeypatch.setattr(evaluation_router, "EVALUATION_CASES", (case,))
+    monkeypatch.setattr(
+        evaluation_router,
+        "get_knowledge_status",
+        lambda session: {"is_current": True},
+    )
+    monkeypatch.setattr(
+        evaluation_router,
+        "run_ragas_evaluation_job",
+        lambda _run_id: None,
+    )
+
+    response = client.post(
+        "/evaluation/ragas/tasks",
+        params={"sample_size": 10, "retrieval_strategy": "none"},
+    )
+
+    assert response.status_code == 202
+    assert response.json()["retrieval_strategy"] == "none"
+
+
+def test_rag_evaluation_none_skips_the_vector_store(client, monkeypatch):
+    case = {
+        "case_id": "evaluation-no-retrieval-case",
+        "case_source": "测试题",
+        "question": "不启用检索时的测试问题",
+        "expected_name": "测试资料",
+        "expected_type": "document",
+        "category": "测试",
+    }
+    monkeypatch.setattr(evaluation_router, "EVALUATION_CASES", (case,))
+    monkeypatch.setattr(
+        evaluation_router,
+        "get_knowledge_status",
+        lambda session: {"is_current": True, "document_count": 1},
+    )
+    monkeypatch.setattr(
+        evaluation_router,
+        "get_vector_store",
+        lambda: (_ for _ in ()).throw(AssertionError("none 不应初始化向量库")),
+    )
+
+    response = client.post(
+        "/evaluation/run",
+        params={"retrieval_strategy": "none"},
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["retrieval_strategy"] == "none"
+    assert data["results"][0]["retrieved_count"] == 0
+    assert data["results"][0]["passed"] is False
+
+
+def test_ragas_pipeline_none_calls_the_model_without_retrieval(test_engine, monkeypatch):
+    chat_model = FakeChatModel(answer="无检索基线回答")
+    monkeypatch.setattr(
+        ask_router,
+        "get_knowledge_status",
+        lambda session: {"is_current": True},
+    )
+    monkeypatch.setattr(
+        ask_router,
+        "get_vector_store",
+        lambda: (_ for _ in ()).throw(AssertionError("none 不应访问向量库")),
+    )
+    monkeypatch.setattr(ask_router, "get_chat_model", lambda: chat_model)
+
+    with Session(test_engine) as session:
+        result = ask_router.run_rag_answer_pipeline(
+            session,
+            "没有检索时仍应调用模型",
+            retrieval_strategy="none",
+        )
+
+    assert result["answer"] == "无检索基线回答"
+    assert result["processing_path"] == "rag-no-retrieval"
+    assert result["retrieved_count"] == 0
+    assert result["contexts"] == []
+    assert chat_model.call_count == 1
+
+
 def test_ragas_worker_persists_aggregate_and_question_scores(
     test_engine,
     monkeypatch,
@@ -1314,6 +1405,9 @@ def test_retrieval_comparison_reports_deduplication_improvement(client, monkeypa
     assert data["baseline"]["passed_count"] == 0
     assert data["current"]["passed_count"] == 1
     assert data["pass_rate_delta"] == 1
+    assert data["top1_accuracy_delta"] == 0
+    assert data["recall_at_3_delta"] == 1
+    assert data["precision_at_3_delta"] == 1 / 3
     assert data["improved_count"] == 1
     assert data["regressed_count"] == 0
     assert data["results"][0]["baseline"]["expected_rank"] is None

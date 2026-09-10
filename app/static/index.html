@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>医疗健康助手</title>
     <link rel="preconnect" href="https://images.unsplash.com" />
-    <link rel="stylesheet" href="/static/styles.css" />
+    <link rel="stylesheet" href="/static/styles.css?v=20260908-retrieval-strategies" />
   </head>
   <body>
     <div class="app-shell">
@@ -260,9 +260,31 @@
                 <button class="secondary-button" id="diagnose-retrieval" type="button">诊断当前检索</button>
                 <button class="secondary-button" id="compare-retrieval" type="button">对比新旧检索</button>
                 <button class="secondary-button" id="run-quality-evaluation" type="button">评估回答质量</button>
-                <button class="secondary-button" id="run-ragas-evaluation" type="button">运行 RAGAS 评测（10题）</button>
+                <button class="secondary-button" id="run-ragas-evaluation" type="button">运行 RAGAS 评测</button>
                 <button class="secondary-button" id="run-rag-evaluation" type="button">运行全部评测</button>
               </div>
+            </div>
+            <div class="evaluation-strategy-controls">
+              <label for="evaluation-retrieval-strategy">本次评测使用的检索策略
+                <select id="evaluation-retrieval-strategy">
+                  <option value="hybrid-rerank">混合检索 + 重排序（当前线上配置）</option>
+                  <option value="hybrid">混合检索（关闭重排序）</option>
+                  <option value="vector">仅向量检索（关闭混合检索和重排序）</option>
+                  <option value="none">无检索（直接让模型回答）</option>
+                </select>
+              </label>
+              <label for="ragas-sample-size">RAGAS 抽样题数
+                <input id="ragas-sample-size" type="number" min="1" max="100" value="10" />
+              </label>
+              <label for="comparison-baseline-strategy">对比基线策略
+                <select id="comparison-baseline-strategy">
+                  <option value="none">无检索（直接让模型回答）</option>
+                  <option value="vector">仅向量检索</option>
+                  <option value="hybrid">混合检索（关闭重排序）</option>
+                  <option value="hybrid-rerank">混合检索 + 重排序</option>
+                </select>
+              </label>
+              <p>“无检索”会跳过向量库和关键词库，只保留模型回答；RAGAS 的上下文精度/召回在无上下文时通常为 0 或低分，具体以库的评分结果为准。</p>
             </div>
             <form class="custom-evaluation-form" id="custom-evaluation-form">
               <label for="evaluation-question">测试问题
@@ -495,6 +517,6 @@
         <p class="account-status" id="account-logged-in-status" aria-live="polite"></p>
       </section>
     </dialog>
-    <script src="/static/app.js?v=20260903-layered-memory"></script>
+    <script src="/static/app.js?v=20260908-retrieval-strategies"></script>
   </body>
 </html>

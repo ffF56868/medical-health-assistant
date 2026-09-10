@@ -84,6 +84,9 @@ const refreshRebuildHistoryButton = document.querySelector("#refresh-rebuild-his
 const runRagEvaluationButton = document.querySelector("#run-rag-evaluation");
 const runQualityEvaluationButton = document.querySelector("#run-quality-evaluation");
 const runRagasEvaluationButton = document.querySelector("#run-ragas-evaluation");
+const evaluationRetrievalStrategy = document.querySelector("#evaluation-retrieval-strategy");
+const ragasSampleSize = document.querySelector("#ragas-sample-size");
+const comparisonBaselineStrategy = document.querySelector("#comparison-baseline-strategy");
 const compareRetrievalButton = document.querySelector("#compare-retrieval");
 const diagnoseRetrievalButton = document.querySelector("#diagnose-retrieval");
 const evaluationStatus = document.querySelector("#evaluation-status");
@@ -553,10 +556,11 @@ function appendMessage(content, role, references = [], assistantMessageId = null
 
 function appendReferences(message, references) {
   if (references.length === 0) return;
-  const referenceSection = document.createElement("section");
+  const referenceSection = document.createElement("details");
   referenceSection.className = "references";
-  const title = document.createElement("h3");
-  title.textContent = "参考资料";
+  referenceSection.open = false;
+  const title = document.createElement("summary");
+  title.textContent = `参考资料（${references.length} 条）`;
   referenceSection.append(title);
 
   for (const reference of references) {
@@ -1212,6 +1216,7 @@ function renderRagEvaluation(data) {
   );
   const retrieval = data.retrieval_metrics;
   const metrics = [
+    ["检索策略", getRetrievalStrategyLabel(data.retrieval_strategy)],
     ["通过", `${data.passed_count} / ${data.total_count}`],
     ["Top1 准确率", `${formatRate(retrieval.top1_accuracy)} (${retrieval.top1_correct_count}/${data.total_count})`],
     ["召回率 Recall@3", `${formatRate(retrieval.recall_at_3)} (${retrieval.recalled_count}/${data.total_count})`],
@@ -1271,10 +1276,24 @@ function formatRate(value) {
     : `${Math.round(value * 100)}%`;
 }
 
+function formatPercentagePointDelta(value) {
+  const points = Math.round(value * 100);
+  return `${points >= 0 ? "+" : ""}${points} 个百分点`;
+}
+
 function formatRagasScore(value) {
   return value === null || value === undefined
     ? "无法计算"
     : value.toFixed(3);
+}
+
+function getRetrievalStrategyLabel(strategy) {
+  return ({
+    none: "无检索（直接生成）",
+    vector: "仅向量检索",
+    hybrid: "混合检索（不重排序）",
+    "hybrid-rerank": "混合检索 + 重排序",
+  })[strategy] || strategy || "未知策略";
 }
 
 function getRagasStatusLabel(status) {
@@ -1305,14 +1324,15 @@ function renderRagasEvaluation(run) {
   ragasEvaluationStatus.className = `ragas-evaluation-status ${run.status}`;
   const createdAt = formatEvaluationTime(run.created_at);
   ragasEvaluationStatus.textContent = active
-    ? `任务 #${run.id} ${getRagasStatusLabel(run.status)}：已完成问答 ${run.completed_count} / ${run.total_count || run.sample_size} 道。`
-    : `任务 #${run.id} ${getRagasStatusLabel(run.status)}，创建于 ${createdAt}。`;
+    ? `任务 #${run.id} ${getRagasStatusLabel(run.status)}：${getRetrievalStrategyLabel(run.retrieval_strategy)}，已完成问答 ${run.completed_count} / ${run.total_count || run.sample_size} 道。`
+    : `任务 #${run.id} ${getRagasStatusLabel(run.status)}：${getRetrievalStrategyLabel(run.retrieval_strategy)}，创建于 ${createdAt}。`;
   if (run.error_message) {
     ragasEvaluationStatus.textContent += ` 错误：${run.error_message}`;
   }
 
   const metrics = run.metrics || {};
   const metricItems = [
+    ["检索策略", getRetrievalStrategyLabel(run.retrieval_strategy)],
     ["抽样题数", `${run.total_count || run.sample_size} 道`],
     ["Faithfulness", formatRagasScore(metrics.faithfulness)],
     ["Answer Relevancy", formatRagasScore(metrics.answer_relevancy)],
@@ -1402,19 +1422,25 @@ async function watchRagasEvaluation(runId) {
       );
     } else {
       runRagasEvaluationButton.disabled = false;
-      runRagasEvaluationButton.textContent = "运行 RAGAS 评测（10题）";
+      runRagasEvaluationButton.textContent = "运行 RAGAS 评测";
     }
   } catch (error) {
     ragasEvaluationStatus.className = "ragas-evaluation-status error";
     ragasEvaluationStatus.textContent = `读取 RAGAS 任务失败：${error.message}`;
     runRagasEvaluationButton.disabled = false;
-    runRagasEvaluationButton.textContent = "运行 RAGAS 评测（10题）";
+    runRagasEvaluationButton.textContent = "运行 RAGAS 评测";
   }
 }
 
 async function runRagasEvaluation() {
+  const parsedSampleSize = Number.parseInt(ragasSampleSize.value, 10);
+  const sampleSize = Number.isFinite(parsedSampleSize)
+    ? Math.min(100, Math.max(1, parsedSampleSize))
+    : 10;
+  ragasSampleSize.value = sampleSize;
+  const strategy = evaluationRetrievalStrategy.value;
   const confirmed = window.confirm(
-    "将随机抽样 10 道题，执行线上混合检索、重排序、OpenAI 回答生成和 RAGAS 四项评分，会消耗模型额度。确定继续吗？",
+    `将随机抽样 ${sampleSize} 道题，使用“${getRetrievalStrategyLabel(strategy)}”执行 OpenAI 回答生成和 RAGAS 四项评分，会消耗模型额度。确定继续吗？`,
   );
   if (!confirmed) return;
 
@@ -1423,7 +1449,11 @@ async function runRagasEvaluation() {
   ragasEvaluationStatus.className = "ragas-evaluation-status";
   ragasEvaluationStatus.textContent = "正在创建 RAGAS 评测任务...";
   try {
-    const response = await apiFetch("/evaluation/ragas/tasks", { method: "POST" });
+    const params = new URLSearchParams({
+      sample_size: String(sampleSize),
+      retrieval_strategy: strategy,
+    });
+    const response = await apiFetch(`/evaluation/ragas/tasks?${params}`, { method: "POST" });
     const run = await response.json();
     if (!response.ok) throw new Error(getErrorMessage(run, "创建 RAGAS 评测任务失败。"));
     renderRagasEvaluation(run);
@@ -1433,7 +1463,7 @@ async function runRagasEvaluation() {
     ragasEvaluationStatus.className = "ragas-evaluation-status error";
     ragasEvaluationStatus.textContent = `创建 RAGAS 评测任务失败：${error.message}`;
     runRagasEvaluationButton.disabled = false;
-    runRagasEvaluationButton.textContent = "运行 RAGAS 评测（10题）";
+    runRagasEvaluationButton.textContent = "运行 RAGAS 评测";
   }
 }
 
@@ -1521,6 +1551,7 @@ function renderQualityEvaluation(data) {
     data.total_count,
   );
   const metricItems = [
+    ["检索策略", getRetrievalStrategyLabel(data.retrieval_strategy)],
     ["答案正确率", `${Math.round(metrics.answer_accuracy * 100)}% (${metrics.answer_correct_count}/${metrics.total_count})`],
     ["引用正确率", `${Math.round(metrics.citation_accuracy * 100)}% (${metrics.citation_correct_count}/${metrics.total_count})`],
     ["拒答准确率", `${Math.round(metrics.refusal_accuracy * 100)}% (${metrics.refusal_correct_count}/${metrics.total_count})`],
@@ -1629,12 +1660,14 @@ function renderRetrievalComparison(data) {
     data.total_count,
   );
   const metrics = [
+    ["基线策略", getRetrievalStrategyLabel(data.baseline_strategy)],
+    ["当前策略", getRetrievalStrategyLabel(data.current_strategy)],
     ["旧策略", `${data.baseline.passed_count} / ${data.total_count} (${Math.round(data.baseline.pass_rate * 100)}%)`],
     ["新策略", `${data.current.passed_count} / ${data.total_count} (${Math.round(data.current.pass_rate * 100)}%)`],
-    ["Top1 准确率（旧 -> 新）", `${formatRate(data.baseline.metrics.top1_accuracy)} -> ${formatRate(data.current.metrics.top1_accuracy)}`],
-    ["召回率 Recall@3（旧 -> 新）", `${formatRate(data.baseline.metrics.recall_at_3)} -> ${formatRate(data.current.metrics.recall_at_3)}`],
-    ["精确率 Precision@3（旧 -> 新）", `${formatRate(data.baseline.metrics.precision_at_3)} -> ${formatRate(data.current.metrics.precision_at_3)}`],
-    ["命中率变化", `${data.pass_rate_delta >= 0 ? "+" : ""}${Math.round(data.pass_rate_delta * 100)}%`],
+    ["Top1 准确率（旧 -> 新）", `${formatRate(data.baseline.metrics.top1_accuracy)} -> ${formatRate(data.current.metrics.top1_accuracy)}（${formatPercentagePointDelta(data.top1_accuracy_delta)}）`],
+    ["召回率 Recall@3（旧 -> 新）", `${formatRate(data.baseline.metrics.recall_at_3)} -> ${formatRate(data.current.metrics.recall_at_3)}（${formatPercentagePointDelta(data.recall_at_3_delta)}）`],
+    ["精确率 Precision@3（旧 -> 新）", `${formatRate(data.baseline.metrics.precision_at_3)} -> ${formatRate(data.current.metrics.precision_at_3)}（${formatPercentagePointDelta(data.precision_at_3_delta)}）`],
+    ["命中率变化", formatPercentagePointDelta(data.pass_rate_delta)],
     ["提升题目", data.improved_count],
     ["回退题目", data.regressed_count],
   ];
@@ -1764,7 +1797,7 @@ function renderEvaluationHistory(data) {
     summary.textContent = `${formatEvaluationTime(run.created_at)}｜通过 ${run.passed_count} / ${run.total_count}｜命中率 ${Math.round(run.pass_rate * 100)}%`;
     const detail = document.createElement("p");
     detail.className = "evaluation-history-detail";
-    detail.textContent = `默认题 ${run.preset_count} 道，自定义题 ${run.custom_count} 道，知识库资料 ${run.knowledge_document_count} 条`;
+    detail.textContent = `策略：${getRetrievalStrategyLabel(run.retrieval_strategy)}；默认题 ${run.preset_count} 道，自定义题 ${run.custom_count} 道，知识库资料 ${run.knowledge_document_count} 条`;
     item.append(summary, detail);
     evaluationHistoryList.append(item);
   }
@@ -1866,7 +1899,11 @@ async function runRagEvaluation() {
   evaluationResults.innerHTML = "";
   evaluationQualityGate.innerHTML = "";
   try {
-    const response = await apiFetch("/evaluation/run", { method: "POST" });
+    const strategy = evaluationRetrievalStrategy.value;
+    const response = await apiFetch(
+      `/evaluation/run?retrieval_strategy=${encodeURIComponent(strategy)}`,
+      { method: "POST" },
+    );
     const data = await response.json();
     if (!response.ok) throw new Error(getErrorMessage(data, "评测失败。"));
     renderRagEvaluation(data);
@@ -1894,7 +1931,10 @@ async function runQualityEvaluation() {
   qualityEvaluationMetrics.innerHTML = "";
   qualityEvaluationResults.innerHTML = "";
   try {
-    const response = await apiFetch("/evaluation/quality", { method: "POST" });
+    const response = await apiFetch(
+      `/evaluation/quality?retrieval_strategy=${encodeURIComponent(evaluationRetrievalStrategy.value)}`,
+      { method: "POST" },
+    );
     const data = await response.json();
     if (!response.ok) throw new Error(getErrorMessage(data, "回答质量评估失败。"));
     renderQualityEvaluation(data);
@@ -1911,22 +1951,26 @@ async function runQualityEvaluation() {
 
 async function compareRetrievalStrategies() {
   const confirmed = window.confirm(
-    "将用默认题和自定义题分别执行旧、新检索策略，只调用 Embedding，不生成模型回答，可能消耗少量额度。确定继续吗？",
+    `将对比“${getRetrievalStrategyLabel(comparisonBaselineStrategy.value)}”和“${getRetrievalStrategyLabel(evaluationRetrievalStrategy.value)}”，只调用 Embedding，不生成模型回答，可能消耗少量额度。确定继续吗？`,
   );
   if (!confirmed) return;
 
   compareRetrievalButton.disabled = true;
   compareRetrievalButton.textContent = "正在对比...";
   comparisonStatus.className = "comparison-status";
-  comparisonStatus.textContent = "正在对比原始前 3 切块与当前检索策略...";
+  comparisonStatus.textContent = "正在执行所选的两套检索策略...";
   comparisonMetrics.innerHTML = "";
   comparisonResults.innerHTML = "";
   try {
-    const response = await apiFetch("/evaluation/compare", { method: "POST" });
+    const params = new URLSearchParams({
+      baseline_strategy: comparisonBaselineStrategy.value,
+      current_strategy: evaluationRetrievalStrategy.value,
+    });
+    const response = await apiFetch(`/evaluation/compare?${params}`, { method: "POST" });
     const data = await response.json();
     if (!response.ok) throw new Error(getErrorMessage(data, "检索对比失败。"));
     renderRetrievalComparison(data);
-    comparisonStatus.textContent = "对比完成。新策略按资料去重并过滤低相关结果。";
+    comparisonStatus.textContent = "对比完成。结果中的策略名称就是本次实际执行的配置。";
   } catch (error) {
     comparisonStatus.className = "comparison-status error";
     comparisonStatus.textContent = `对比失败：${error.message}`;
@@ -1949,7 +1993,10 @@ async function diagnoseCurrentRetrieval() {
   diagnosisMetrics.innerHTML = "";
   diagnosisResults.innerHTML = "";
   try {
-    const response = await apiFetch("/evaluation/diagnose", { method: "POST" });
+    const response = await apiFetch(
+      `/evaluation/diagnose?retrieval_strategy=${encodeURIComponent(evaluationRetrievalStrategy.value)}`,
+      { method: "POST" },
+    );
     const data = await response.json();
     if (!response.ok) throw new Error(getErrorMessage(data, "检索诊断失败。"));
     renderRetrievalDiagnosis(data);

@@ -179,6 +179,7 @@ class RAGEvaluationRun(SQLModel, table=True):
     pass_rate: float
     preset_count: int
     custom_count: int
+    retrieval_strategy: str = Field(default="hybrid-rerank", max_length=30)
     knowledge_document_count: int
     knowledge_hash: str | None = Field(default=None, max_length=64)
     results_json: str = Field(default="[]", sa_type=Text)
@@ -200,6 +201,7 @@ class RAGQualityEvaluationRun(SQLModel, table=True):
     refusal_expected_count: int
     refusal_observed_count: int
     refusal_rate: float
+    retrieval_strategy: str = Field(default="hybrid-rerank", max_length=30)
     knowledge_document_count: int
     knowledge_hash: str | None = Field(default=None, max_length=64)
     results_json: str = Field(default="[]", sa_type=Text)
@@ -215,6 +217,7 @@ class RAGASAutoEvaluationRun(SQLModel, table=True):
     id: int | None = Field(default=None, primary_key=True)
     status: str = Field(default="pending", max_length=20, index=True)
     sample_size: int = Field(default=10)
+    retrieval_strategy: str = Field(default="hybrid-rerank", max_length=30)
     total_count: int = Field(default=0)
     completed_count: int = Field(default=0)
     faithfulness: float | None = None

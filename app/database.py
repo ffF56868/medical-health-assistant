@@ -62,6 +62,13 @@ SQLITE_COLUMN_MIGRATIONS = {
     },
     "ragevaluationrun": {
         "results_json": "TEXT NOT NULL DEFAULT '[]'",
+        "retrieval_strategy": "VARCHAR(30) NOT NULL DEFAULT 'hybrid-rerank'",
+    },
+    "ragqualityevaluationrun": {
+        "retrieval_strategy": "VARCHAR(30) NOT NULL DEFAULT 'hybrid-rerank'",
+    },
+    "ragasautoevaluationrun": {
+        "retrieval_strategy": "VARCHAR(30) NOT NULL DEFAULT 'hybrid-rerank'",
     },
     "chatmessage": {
         "user_id": "INTEGER",

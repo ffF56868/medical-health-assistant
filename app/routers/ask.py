@@ -1,5 +1,6 @@
 import os
 import json
+import logging
 import re
 from datetime import datetime
 from time import perf_counter
@@ -19,6 +20,7 @@ from app.hybrid_search import (
     extract_keyword_terms,
     get_retrieval_method,
     hybrid_search,
+    normalize_retrieval_strategy,
 )
 from app.monitoring import record_request_metric
 from app.memory import (
@@ -40,6 +42,7 @@ router = APIRouter(
     tags=["ask"],
     dependencies=[Depends(get_current_user)],
 )
+logger = logging.getLogger(__name__)
 URGENT_WARNING_KEYWORDS = (
     "呼吸困难",
     "持续胸痛",
@@ -186,6 +189,7 @@ def search_knowledge(
     current_user: User | None = None,
     session: Session | None = None,
     keyword_query: str | None = None,
+    retrieval_strategy: str = "hybrid-rerank",
 ):
     if session is not None:
         return hybrid_search(
@@ -197,8 +201,12 @@ def search_knowledge(
             current_user,
             RAG_RETRIEVAL_FETCH_COUNT,
             keyword_query=keyword_query,
+            retrieval_strategy=retrieval_strategy,
         )
 
+    strategy = normalize_retrieval_strategy(retrieval_strategy)
+    if strategy == "none":
+        return []
     search_options = {"k": RAG_RETRIEVAL_FETCH_COUNT}
     vector_filter = build_vector_filter(
         knowledge_type,
@@ -801,6 +809,7 @@ def run_rag_answer_pipeline(
     source_filter: str = "all",
     current_user: User | None = None,
     history_text: str = "暂无历史对话",
+    retrieval_strategy: str = "hybrid-rerank",
 ) -> dict:
     """Run the side-effect-free form of the normal first-turn RAG workflow.
 
@@ -809,6 +818,7 @@ def run_rag_answer_pipeline(
     path without creating user conversation messages.
     """
     started_at = perf_counter()
+    retrieval_strategy = normalize_retrieval_strategy(retrieval_strategy)
     urgent_answer = get_urgent_warning_response(question)
     if urgent_answer:
         references = build_safety_references()
@@ -832,35 +842,71 @@ def run_rag_answer_pipeline(
         raise RuntimeError("知识库已过期，请先执行 POST /knowledge/rebuild")
 
     try:
-        vector_store = get_vector_store()
-        matches = search_knowledge(
-            vector_store,
-            question,
-            knowledge_type,
-            source_filter,
-            current_user,
-            session,
-            question,
-        )
+        if retrieval_strategy == "none":
+            matches = []
+        else:
+            vector_store = get_vector_store()
+            matches = search_knowledge(
+                vector_store,
+                question,
+                knowledge_type,
+                source_filter,
+                current_user,
+                session,
+                question,
+                retrieval_strategy=retrieval_strategy,
+            )
     except Exception as error:
-        raise RuntimeError("知识库暂时不可用，请确认已执行 /knowledge/rebuild") from error
+        logger.exception(
+            "RAG retrieval failed: strategy=%s question=%s",
+            retrieval_strategy,
+            question[:200],
+        )
+        raise RuntimeError(
+            "向量检索失败："
+            f"{type(error).__name__}: {str(error)[:400]}。"
+            "知识库状态正常时无需重建，请检查 Embedding/API 网络配置。"
+        ) from error
 
     relevant_matches = select_distinct_relevant_matches(matches)
     relevant_matches = select_title_matched_documents(question, relevant_matches)
     relevant_matches = select_page_matched_documents(question, relevant_matches)
     relevant_documents = [document for document, _ in relevant_matches]
     if not relevant_documents:
+        no_retrieval = retrieval_strategy == "none"
+        answer = "知识库中没有找到足够相关的内容。建议换一种更具体的说法。"
+        if no_retrieval:
+            try:
+                response = get_chat_model().invoke(
+                    build_rag_answer_prompt().format_messages(
+                        context="（本次评测明确关闭检索，没有提供参考资料。）",
+                        history=history_text,
+                        question=question,
+                        source_limitations="本次评测未启用知识库检索。",
+                        reference_names="无",
+                        answer_mode="无检索基线模式：直接回答问题；如果不确定，明确说明无法确认，不要编造医疗事实。",
+                    )
+                )
+                answer = str(response.content)
+            except Exception as error:
+                raise RuntimeError("模型暂时不可用，请检查 CHAT_MODEL 和 API 配置") from error
         metadata = build_response_metadata(
-            source="milvus-vector-search:no-match",
+            source=(
+                "no-retrieval-openai-generation"
+                if no_retrieval
+                else "milvus-vector-search:no-match"
+            ),
             references=[],
-            processing_path="vector-search-no-match",
+            processing_path=(
+                "rag-no-retrieval" if no_retrieval else "vector-search-no-match"
+            ),
             retrieval_scope=knowledge_type,
             source_filter=source_filter,
             retrieved_count=0,
             started_at=started_at,
         )
         return {
-            "answer": "知识库中没有找到足够相关的内容。建议换一种更具体的说法。",
+            "answer": answer,
             "contexts": [],
             **metadata,
         }

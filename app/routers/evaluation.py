@@ -1,4 +1,5 @@
 import json
+import logging
 import math
 import os
 from datetime import UTC, datetime
@@ -9,7 +10,7 @@ from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, s
 from sqlmodel import Session, select
 
 from app.database import engine, get_session
-from app.hybrid_search import hybrid_search
+from app.hybrid_search import hybrid_search, normalize_retrieval_strategy
 from app.models import (
     Condition,
     Drug,
@@ -66,6 +67,7 @@ router = APIRouter(
     dependencies=[Depends(require_admin)],
 )
 BASELINE_RETRIEVAL_COUNT = 3
+DEFAULT_RETRIEVAL_STRATEGY = "hybrid-rerank"
 
 # All evaluation cases are user-managed records stored in MySQL. Keeping the
 # defaults empty ensures every metric reflects the current 100-question set.
@@ -73,7 +75,7 @@ EVALUATION_CASES: tuple[dict, ...] = ()
 QUALITY_ONLY_CASES: tuple[dict, ...] = ()
 QUALITY_CASE_CONFIG: dict[str, dict] = {}
 RAGAS_DEFAULT_SAMPLE_SIZE = 10
-RAGAS_MAX_SAMPLE_SIZE = 50
+RAGAS_MAX_SAMPLE_SIZE = 100
 RAGAS_REFERENCE_MAX_CHARS = 6000
 RAGAS_JOB_TIMEOUT_SECONDS = int(
     os.getenv("RAGAS_JOB_TIMEOUT_SECONDS", str(60 * 60))
@@ -81,6 +83,7 @@ RAGAS_JOB_TIMEOUT_SECONDS = int(
 ACTIVE_RAGAS_STATUSES = {"pending", "running"}
 ragas_start_lock = Lock()
 ragas_execution_lock = Lock()
+logger = logging.getLogger(__name__)
 
 
 def get_alternative_names(case: dict) -> list[str]:
@@ -120,6 +123,13 @@ def normalize_evaluation_case(case: dict) -> dict:
 
 def get_acceptable_names(case: dict) -> set[str]:
     return {str(case["expected_name"]), *get_alternative_names(case)}
+
+
+def validate_retrieval_strategy(value: str) -> str:
+    try:
+        return normalize_retrieval_strategy(value)
+    except ValueError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
 
 
 def build_strategy_result(
@@ -166,12 +176,17 @@ def build_strategy_result(
 
 
 def evaluate_baseline_case(
+    session: Session,
     vector_store: object,
     case: dict,
+    retrieval_strategy: str = "vector",
 ) -> RetrievalStrategyResult:
-    matches = vector_store.similarity_search_with_relevance_scores(
-        case["question"],
-        k=BASELINE_RETRIEVAL_COUNT,
+    matches = get_strategy_matches(
+        session,
+        vector_store,
+        case,
+        retrieval_strategy,
+        BASELINE_RETRIEVAL_COUNT,
     )
     return build_strategy_result(matches, case)
 
@@ -180,24 +195,47 @@ def evaluate_current_case(
     session: Session,
     vector_store: object,
     case: dict,
+    retrieval_strategy: str = DEFAULT_RETRIEVAL_STRATEGY,
 ) -> RetrievalStrategyResult:
-    return build_strategy_result(get_current_matches(session, vector_store, case), case)
+    return build_strategy_result(
+        get_current_matches(session, vector_store, case, retrieval_strategy),
+        case,
+    )
+
+
+def get_strategy_matches(
+    session: Session,
+    vector_store: object,
+    case: dict,
+    retrieval_strategy: str,
+    fetch_count: int,
+) -> list[tuple[object, float]]:
+    """Run exactly the selected retrieval stages for an evaluation case."""
+    return hybrid_search(
+        session,
+        vector_store,
+        case["question"],
+        knowledge_type="all",
+        source_filter="all",
+        vector_fetch_count=fetch_count,
+        retrieval_strategy=retrieval_strategy,
+    )
 
 
 def get_current_matches(
     session: Session,
     vector_store: object,
     case: dict,
+    retrieval_strategy: str = DEFAULT_RETRIEVAL_STRATEGY,
 ) -> list[tuple[object, float]]:
     # This must follow the same retrieval path as /ask. Otherwise the
     # evaluation page would report vector-only results for a hybrid RAG API.
-    matches = hybrid_search(
+    matches = get_strategy_matches(
         session,
         vector_store,
-        case["question"],
-        knowledge_type="all",
-        source_filter="all",
-        vector_fetch_count=RAG_RETRIEVAL_FETCH_COUNT,
+        case,
+        retrieval_strategy,
+        RAG_RETRIEVAL_FETCH_COUNT,
     )
     return select_distinct_relevant_matches(
         matches,
@@ -209,8 +247,14 @@ def evaluate_case(
     session: Session,
     vector_store: object,
     case: dict,
+    retrieval_strategy: str = DEFAULT_RETRIEVAL_STRATEGY,
 ) -> RAGEvaluationCaseResult:
-    result = evaluate_current_case(session, vector_store, case)
+    result = evaluate_current_case(
+        session,
+        vector_store,
+        case,
+        retrieval_strategy,
+    )
     return RAGEvaluationCaseResult(**case, **result.model_dump())
 
 
@@ -241,9 +285,21 @@ def compare_case(
     session: Session,
     vector_store: object,
     case: dict,
+    baseline_strategy: str = "vector",
+    current_strategy: str = DEFAULT_RETRIEVAL_STRATEGY,
 ) -> RetrievalComparisonCaseResult:
-    baseline = evaluate_baseline_case(vector_store, case)
-    current = evaluate_current_case(session, vector_store, case)
+    baseline = evaluate_baseline_case(
+        session,
+        vector_store,
+        case,
+        baseline_strategy,
+    )
+    current = evaluate_current_case(
+        session,
+        vector_store,
+        case,
+        current_strategy,
+    )
     baseline_rank = baseline.expected_rank or (RAG_RETRIEVAL_RESULT_COUNT + 1)
     current_rank = current.expected_rank or (RAG_RETRIEVAL_RESULT_COUNT + 1)
     if current_rank < baseline_rank:
@@ -272,12 +328,19 @@ def build_diagnostic_case(
     session: Session,
     vector_store: object,
     case: dict,
+    retrieval_strategy: str = DEFAULT_RETRIEVAL_STRATEGY,
 ) -> RetrievalDiagnosticCaseResult:
-    raw_matches = vector_store.similarity_search_with_relevance_scores(
-        case["question"],
-        k=RAG_RETRIEVAL_FETCH_COUNT,
+    raw_matches = get_strategy_matches(
+        session,
+        vector_store,
+        case,
+        retrieval_strategy,
+        RAG_RETRIEVAL_FETCH_COUNT,
     )
-    selected_matches = get_current_matches(session, vector_store, case)
+    selected_matches = select_distinct_relevant_matches(
+        raw_matches,
+        limit=RAG_RETRIEVAL_RESULT_COUNT,
+    )
     strategy_result = build_strategy_result(selected_matches, case)
     candidates = [
         RetrievalDiagnosticCandidate(
@@ -654,7 +717,14 @@ def list_evaluation_history(
 
 
 @router.post("/run", response_model=RAGEvaluationResponse)
-def run_rag_evaluation(session: Session = Depends(get_session)):
+def run_rag_evaluation(
+    retrieval_strategy: str = Query(
+        default=DEFAULT_RETRIEVAL_STRATEGY,
+        description="评测使用的检索策略",
+    ),
+    session: Session = Depends(get_session),
+):
+    retrieval_strategy = validate_retrieval_strategy(retrieval_strategy)
     knowledge_status = get_knowledge_status(session)
     if not knowledge_status["is_current"]:
         raise HTTPException(
@@ -663,9 +733,16 @@ def run_rag_evaluation(session: Session = Depends(get_session)):
         )
 
     try:
-        vector_store = get_vector_store()
+        vector_store = (
+            None
+            if retrieval_strategy == "none"
+            else get_vector_store()
+        )
         cases, custom_count = get_evaluation_cases(session)
-        results = [evaluate_case(session, vector_store, case) for case in cases]
+        results = [
+            evaluate_case(session, vector_store, case, retrieval_strategy)
+            for case in cases
+        ]
     except Exception as error:
         raise HTTPException(
             status_code=503,
@@ -684,6 +761,7 @@ def run_rag_evaluation(session: Session = Depends(get_session)):
         pass_rate=pass_rate,
         preset_count=len(EVALUATION_CASES),
         custom_count=custom_count,
+        retrieval_strategy=retrieval_strategy,
         knowledge_document_count=knowledge_status.get("document_count", 0),
         knowledge_hash=knowledge_index.content_hash if knowledge_index else None,
         results_json=json.dumps(build_result_snapshot(results), ensure_ascii=False),
@@ -698,6 +776,7 @@ def run_rag_evaluation(session: Session = Depends(get_session)):
         pass_rate=pass_rate,
         preset_count=len(EVALUATION_CASES),
         custom_count=custom_count,
+        retrieval_strategy=retrieval_strategy,
         retrieval_metrics=build_retrieval_metrics(results),
         category_metrics=build_category_metrics(results),
         quality_gate=quality_gate,
@@ -755,8 +834,14 @@ def evaluate_quality_case(
     session: Session,
     vector_store: object,
     case: dict,
+    retrieval_strategy: str = DEFAULT_RETRIEVAL_STRATEGY,
 ) -> RAGQualityCaseResult:
-    selected_matches = get_current_matches(session, vector_store, case)
+    selected_matches = get_current_matches(
+        session,
+        vector_store,
+        case,
+        retrieval_strategy,
+    )
     evidence = " ".join(
         get_document_evidence(document) for document, _ in selected_matches
     ).casefold()
@@ -832,8 +917,15 @@ def evaluate_quality_case(
 
 
 @router.post("/quality", response_model=RAGQualityResponse)
-def run_rag_quality_evaluation(session: Session = Depends(get_session)):
+def run_rag_quality_evaluation(
+    retrieval_strategy: str = Query(
+        default=DEFAULT_RETRIEVAL_STRATEGY,
+        description="质量评测使用的检索策略",
+    ),
+    session: Session = Depends(get_session),
+):
     """Evaluate evidence support, citation quality, and refusal behavior deterministically."""
+    retrieval_strategy = validate_retrieval_strategy(retrieval_strategy)
     knowledge_status = get_knowledge_status(session)
     if not knowledge_status["is_current"]:
         raise HTTPException(
@@ -842,10 +934,19 @@ def run_rag_quality_evaluation(session: Session = Depends(get_session)):
         )
 
     try:
-        vector_store = get_vector_store()
+        vector_store = (
+            None
+            if retrieval_strategy == "none"
+            else get_vector_store()
+        )
         cases, custom_count = get_quality_evaluation_cases(session)
         results = [
-            evaluate_quality_case(session, vector_store, case)
+            evaluate_quality_case(
+                session,
+                vector_store,
+                case,
+                retrieval_strategy,
+            )
             for case in cases
         ]
     except Exception as error:
@@ -879,6 +980,7 @@ def run_rag_quality_evaluation(session: Session = Depends(get_session)):
     knowledge_index = session.get(KnowledgeIndexState, 1)
     quality_run = RAGQualityEvaluationRun(
         **quality_metrics,
+        retrieval_strategy=retrieval_strategy,
         knowledge_document_count=knowledge_status.get("document_count", 0),
         knowledge_hash=knowledge_index.content_hash if knowledge_index else None,
         results_json=json.dumps(
@@ -894,13 +996,26 @@ def run_rag_quality_evaluation(session: Session = Depends(get_session)):
         metrics=quality_metrics,
         preset_count=len(EVALUATION_CASES) + len(QUALITY_ONLY_CASES),
         custom_count=custom_count,
+        retrieval_strategy=retrieval_strategy,
         results=results,
     )
 
 
 @router.post("/compare", response_model=RetrievalComparisonResponse)
-def compare_retrieval_strategies(session: Session = Depends(get_session)):
-    """Compare the pre-deduplication top-three search with the live RAG strategy."""
+def compare_retrieval_strategies(
+    baseline_strategy: str = Query(
+        default="vector",
+        description="对比基线策略",
+    ),
+    current_strategy: str = Query(
+        default=DEFAULT_RETRIEVAL_STRATEGY,
+        description="对比当前策略",
+    ),
+    session: Session = Depends(get_session),
+):
+    """Compare two explicitly selected retrieval strategies."""
+    baseline_strategy = validate_retrieval_strategy(baseline_strategy)
+    current_strategy = validate_retrieval_strategy(current_strategy)
     knowledge_status = get_knowledge_status(session)
     if not knowledge_status["is_current"]:
         raise HTTPException(
@@ -909,9 +1024,22 @@ def compare_retrieval_strategies(session: Session = Depends(get_session)):
         )
 
     try:
-        vector_store = get_vector_store()
+        vector_store = (
+            None
+            if baseline_strategy == "none" and current_strategy == "none"
+            else get_vector_store()
+        )
         cases, custom_count = get_evaluation_cases(session)
-        results = [compare_case(session, vector_store, case) for case in cases]
+        results = [
+            compare_case(
+                session,
+                vector_store,
+                case,
+                baseline_strategy,
+                current_strategy,
+            )
+            for case in cases
+        ]
     except Exception as error:
         raise HTTPException(
             status_code=503,
@@ -929,6 +1057,8 @@ def compare_retrieval_strategies(session: Session = Depends(get_session)):
         total_count=total_count,
         preset_count=len(EVALUATION_CASES),
         custom_count=custom_count,
+        baseline_strategy=baseline_strategy,
+        current_strategy=current_strategy,
         baseline=RetrievalStrategySummary(
             passed_count=baseline_passed_count,
             pass_rate=baseline_pass_rate,
@@ -940,6 +1070,13 @@ def compare_retrieval_strategies(session: Session = Depends(get_session)):
             metrics=current_metrics,
         ),
         pass_rate_delta=current_pass_rate - baseline_pass_rate,
+        top1_accuracy_delta=(
+            current_metrics.top1_accuracy - baseline_metrics.top1_accuracy
+        ),
+        recall_at_3_delta=current_metrics.recall_at_3 - baseline_metrics.recall_at_3,
+        precision_at_3_delta=(
+            current_metrics.precision_at_3 - baseline_metrics.precision_at_3
+        ),
         improved_count=sum(result.change == "improved" for result in results),
         regressed_count=sum(result.change == "regressed" for result in results),
         unchanged_count=sum(result.change == "unchanged" for result in results),
@@ -948,8 +1085,15 @@ def compare_retrieval_strategies(session: Session = Depends(get_session)):
 
 
 @router.post("/diagnose", response_model=RetrievalDiagnosticResponse)
-def diagnose_retrieval(session: Session = Depends(get_session)):
+def diagnose_retrieval(
+    retrieval_strategy: str = Query(
+        default=DEFAULT_RETRIEVAL_STRATEGY,
+        description="诊断使用的检索策略",
+    ),
+    session: Session = Depends(get_session),
+):
     """Explain why each evaluation target did or did not reach the live top three."""
+    retrieval_strategy = validate_retrieval_strategy(retrieval_strategy)
     knowledge_status = get_knowledge_status(session)
     if not knowledge_status["is_current"]:
         raise HTTPException(
@@ -958,10 +1102,12 @@ def diagnose_retrieval(session: Session = Depends(get_session)):
         )
 
     try:
-        vector_store = get_vector_store()
+        vector_store = (
+            None if retrieval_strategy == "none" else get_vector_store()
+        )
         cases, _ = get_evaluation_cases(session)
         results = [
-            build_diagnostic_case(session, vector_store, case)
+            build_diagnostic_case(session, vector_store, case, retrieval_strategy)
             for case in cases
         ]
     except Exception as error:
@@ -1061,6 +1207,7 @@ def serialize_ragas_run(
         id=run.id,
         status=run.status,
         sample_size=run.sample_size,
+        retrieval_strategy=run.retrieval_strategy,
         total_count=run.total_count,
         completed_count=run.completed_count,
         metrics=get_ragas_metrics(run),
@@ -1180,7 +1327,11 @@ def execute_ragas_evaluation(
     question_results: list[dict] = []
     samples: list[SingleTurnSample] = []
     for case in sampled_cases:
-        pipeline = run_rag_answer_pipeline(session, case["question"])
+        pipeline = run_rag_answer_pipeline(
+            session,
+            case["question"],
+            retrieval_strategy=run.retrieval_strategy,
+        )
         reference, reference_available = get_case_reference_answer(session, case)
         references = pipeline.get("references", [])
         context_titles = [
@@ -1273,6 +1424,7 @@ def run_ragas_evaluation_job(run_id: int) -> None:
                 session.commit()
             except Exception as error:
                 session.rollback()
+                logger.exception("RAGAS evaluation failed: run_id=%s", run_id)
                 with Session(engine) as failed_session:
                     failed_run = failed_session.get(RAGASAutoEvaluationRun, run_id)
                     if failed_run is not None:
@@ -1295,9 +1447,14 @@ def start_ragas_evaluation(
         ge=1,
         le=RAGAS_MAX_SAMPLE_SIZE,
     ),
+    retrieval_strategy: str = Query(
+        default=DEFAULT_RETRIEVAL_STRATEGY,
+        description="RAGAS 生成回答使用的检索策略",
+    ),
     session: Session = Depends(get_session),
 ):
     """Start a background RAGAS assessment; ten sampled cases are the default."""
+    retrieval_strategy = validate_retrieval_strategy(retrieval_strategy)
     with ragas_start_lock:
         recover_stale_ragas_runs(session)
         active_run = get_ragas_active_run(session)
@@ -1315,7 +1472,10 @@ def start_ragas_evaluation(
         cases, _ = get_evaluation_cases(session)
         if not cases:
             raise HTTPException(status_code=422, detail="没有可运行的评测题")
-        run = RAGASAutoEvaluationRun(sample_size=sample_size)
+        run = RAGASAutoEvaluationRun(
+            sample_size=sample_size,
+            retrieval_strategy=retrieval_strategy,
+        )
         session.add(run)
         session.commit()
         session.refresh(run)

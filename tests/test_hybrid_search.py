@@ -3,11 +3,84 @@ from sqlmodel import Session
 
 from app.hybrid_search import (
     KeywordMatch,
+    hybrid_search,
     extract_keyword_terms,
     keyword_search,
     merge_retrieval_matches,
 )
 from app.models import Drug, KnowledgeDocument, User
+
+
+class StrategyVectorStore:
+    def __init__(self):
+        self.calls = 0
+
+    def similarity_search_with_relevance_scores(self, _query, **_kwargs):
+        self.calls += 1
+        return [
+            (
+                Document(
+                    page_content="向量结果",
+                    metadata={"type": "document", "record_id": 1, "name": "向量资料"},
+                ),
+                0.8,
+            )
+        ]
+
+
+def test_retrieval_strategy_can_disable_vector_and_keyword_stages(test_engine, monkeypatch):
+    vector_store = StrategyVectorStore()
+    keyword_calls = []
+    monkeypatch.setattr(
+        "app.hybrid_search.keyword_search",
+        lambda *args, **kwargs: keyword_calls.append(True) or [],
+    )
+
+    with Session(test_engine) as session:
+        assert hybrid_search(
+            session, vector_store, "测试", "all", "all", retrieval_strategy="none"
+        ) == []
+        assert vector_store.calls == 0
+        assert keyword_calls == []
+
+        vector_matches = hybrid_search(
+            session, vector_store, "测试", "all", "all", retrieval_strategy="vector"
+        )
+        assert len(vector_matches) == 1
+        assert vector_store.calls == 1
+        assert keyword_calls == []
+
+
+def test_hybrid_strategy_skips_reranking(test_engine, monkeypatch):
+    vector_store = StrategyVectorStore()
+    monkeypatch.setattr(
+        "app.hybrid_search.keyword_search",
+        lambda *args, **kwargs: [],
+    )
+    rerank_calls = []
+    monkeypatch.setattr(
+        "app.hybrid_search.rerank_matches",
+        lambda *args, **kwargs: rerank_calls.append(True) or [],
+    )
+
+    with Session(test_engine) as session:
+        matches = hybrid_search(
+            session, vector_store, "测试", "all", "all", retrieval_strategy="hybrid"
+        )
+
+    assert len(matches) == 1
+    assert rerank_calls == []
+
+    reranked = hybrid_search(
+        session,
+        vector_store,
+        "测试",
+        "all",
+        "all",
+        retrieval_strategy="hybrid-rerank",
+    )
+    assert reranked == []
+    assert rerank_calls == [True]
 
 
 def test_extract_keyword_terms_keeps_a_chinese_medical_name():

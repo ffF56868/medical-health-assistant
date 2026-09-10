@@ -420,6 +420,14 @@ h2 { font-size: 20px; margin: 0; }
 
 .evaluation-actions { display: flex; flex-wrap: wrap; gap: 8px; justify-content: flex-end; }
 
+.evaluation-strategy-controls { align-items: end; background: #f6f9f8; border: 1px solid #dce4e5; display: grid; gap: 10px; grid-template-columns: minmax(250px, 1.5fr) minmax(130px, 0.6fr) minmax(220px, 1.2fr); margin-top: 14px; padding: 10px; }
+
+.evaluation-strategy-controls label { color: #526166; display: grid; font-size: 13px; gap: 5px; }
+
+.evaluation-strategy-controls select, .evaluation-strategy-controls input { background: #fff; border: 1px solid #b9ccca; border-radius: 4px; color: #1e3034; font: inherit; padding: 8px; }
+
+.evaluation-strategy-controls p { color: #607176; font-size: 12px; grid-column: 1 / -1; line-height: 1.5; margin: 0; }
+
 .evaluation-heading .eyebrow { margin: 0 0 3px; }
 
 .evaluation-heading h3 { font-size: 16px; margin: 0; }
@@ -618,28 +626,32 @@ h2 { font-size: 20px; margin: 0; }
 
 .message p { margin: 0; }
 
-.references { margin-top: 14px; }
+.references { margin-top: 7px; }
 
-.references h3 { font-size: 14px; margin: 0 0 8px; }
+.references > summary { color: #21676a; cursor: pointer; font-size: 14px; font-weight: 700; padding: 1px 0; }
 
-.reference-item { border-left: 3px solid #86aaa6; margin-top: 8px; padding: 7px 0 7px 10px; }
+.references[open] > summary { margin-bottom: 2px; }
 
-.reference-heading { align-items: center; display: flex; gap: 8px; justify-content: space-between; }
+.reference-item { border-left: 2px solid #86aaa6; display: grid; gap: 3px; margin-top: 3px; padding: 4px 0 4px 8px; }
+
+.reference-item > * { margin: 0; min-height: 0; }
+
+.reference-heading { align-items: center; display: flex; gap: 6px; justify-content: space-between; line-height: 1.25; }
 
 .reference-score { color: #3b7475; font-size: 12px; }
 
-.reference-source, .reference-location, .reference-excerpt { color: #526166; font-size: 13px; margin: 4px 0 0; }
+.reference-source, .reference-location, .reference-excerpt { color: #526166; font-size: 13px; line-height: 1.4; }
 .reference-location { color: #21676a; font-weight: 600; }
 
-.reference-confidence { color: #3b7475; font-size: 12px; margin: 4px 0 0; }
+.reference-confidence { color: #3b7475; font-size: 12px; line-height: 1.4; }
 
 .reference-confidence.needs-review { color: #97362d; font-weight: 700; }
 
-.reference-open { background: transparent; border: 0; color: #21676a; cursor: pointer; font-size: 13px; margin-top: 8px; padding: 0; text-decoration: underline; text-underline-offset: 3px; }
+.reference-open { background: transparent; border: 0; color: #21676a; cursor: pointer; font-size: 13px; padding: 0; text-align: left; text-decoration: underline; text-underline-offset: 2px; }
 
 .reference-open:disabled { color: #657278; cursor: wait; }
 
-.source-url-link { color: #21676a; display: inline-block; font-size: 13px; margin-top: 7px; overflow-wrap: anywhere; text-decoration: underline; text-underline-offset: 3px; }
+.source-url-link { color: #21676a; display: inline-block; font-size: 13px; margin: 0; overflow-wrap: anywhere; text-decoration: underline; text-underline-offset: 2px; }
 
 .reference-detail .source-url-link { margin-top: 4px; }
 
@@ -714,6 +726,8 @@ h2 { font-size: 20px; margin: 0; }
   .review-batch-fields { grid-template-columns: 1fr; }
   .evaluation-heading { align-items: flex-start; flex-direction: column; }
   .evaluation-actions { justify-content: flex-start; width: 100%; }
+  .evaluation-strategy-controls { grid-template-columns: 1fr; }
+  .evaluation-strategy-controls p { grid-column: auto; }
   .custom-evaluation-form { align-items: stretch; grid-template-columns: 1fr; }
   .custom-evaluation-form button { align-self: stretch; }
   .custom-evaluation-item { align-items: flex-start; flex-direction: column; }

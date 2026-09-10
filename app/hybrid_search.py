@@ -24,6 +24,18 @@ from app.source_metadata import needs_source_review
 KEYWORD_FETCH_COUNT = 8
 VECTOR_WEIGHT = 0.65
 KEYWORD_WEIGHT = 0.35
+RETRIEVAL_STRATEGIES = (
+    "none",
+    "vector",
+    "hybrid",
+    "hybrid-rerank",
+)
+RETRIEVAL_STRATEGY_LABELS = {
+    "none": "无检索（直接生成）",
+    "vector": "仅向量检索",
+    "hybrid": "混合检索（不重排序）",
+    "hybrid-rerank": "混合检索 + 重排序",
+}
 PRIORITY_MEDICAL_TERMS = (
     "对乙酰氨基酚",
     "阿莫西林",
@@ -92,6 +104,15 @@ GENERIC_TITLE_PHRASES = (
 class KeywordMatch:
     document: Document
     score: float
+
+
+def normalize_retrieval_strategy(value: str | None) -> str:
+    """Validate the explicit retrieval mode used by evaluation runs."""
+    strategy = str(value or "hybrid-rerank").strip().lower()
+    if strategy not in RETRIEVAL_STRATEGIES:
+        choices = "、".join(RETRIEVAL_STRATEGIES)
+        raise ValueError(f"检索策略必须是：{choices}")
+    return strategy
 
 
 def build_vector_filter(
@@ -536,8 +557,18 @@ def hybrid_search(
     current_user: User | None = None,
     vector_fetch_count: int = 8,
     keyword_query: str | None = None,
+    retrieval_strategy: str = "hybrid-rerank",
 ) -> list[tuple[Document, float]]:
-    """Run MySQL and Milvus retrieval, then return one ranked list."""
+    """Run the selected retrieval stages and return one ranked list.
+
+    The function name is retained for compatibility with the existing API.
+    ``hybrid-rerank`` is the production default; evaluation can explicitly
+    disable either stage without changing normal user conversations.
+    """
+    strategy = normalize_retrieval_strategy(retrieval_strategy)
+    if strategy == "none":
+        return []
+
     vector_options: dict[str, object] = {"k": vector_fetch_count}
     vector_filter = build_vector_filter(
         knowledge_type,
@@ -546,19 +577,29 @@ def hybrid_search(
     )
     if vector_filter is not None:
         vector_options["filter"] = vector_filter
-    vector_matches = vector_store.similarity_search_with_relevance_scores(
-        query,
-        **vector_options,
+    vector_matches = (
+        vector_store.similarity_search_with_relevance_scores(
+            query,
+            **vector_options,
+        )
+        if strategy in {"vector", "hybrid", "hybrid-rerank"}
+        else []
     )
-    keyword_matches = keyword_search(
-        session,
-        keyword_query or query,
-        knowledge_type,
-        source_filter,
-        current_user,
+    keyword_matches = (
+        keyword_search(
+            session,
+            keyword_query or query,
+            knowledge_type,
+            source_filter,
+            current_user,
+        )
+        if strategy in {"hybrid", "hybrid-rerank"}
+        else []
     )
     merged_matches = merge_retrieval_matches(vector_matches, keyword_matches)
-    return rerank_matches(keyword_query or query, merged_matches)
+    if strategy == "hybrid-rerank":
+        return rerank_matches(keyword_query or query, merged_matches)
+    return merged_matches
 
 
 def get_retrieval_method(matches: list[tuple[object, float]]) -> str:

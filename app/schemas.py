@@ -543,9 +543,14 @@ class RetrievalComparisonResponse(SQLModel):
     total_count: int
     preset_count: int
     custom_count: int
+    baseline_strategy: str
+    current_strategy: str
     baseline: RetrievalStrategySummary
     current: RetrievalStrategySummary
     pass_rate_delta: float
+    top1_accuracy_delta: float
+    recall_at_3_delta: float
+    precision_at_3_delta: float
     improved_count: int
     regressed_count: int
     unchanged_count: int
@@ -609,6 +614,7 @@ class RAGEvaluationResponse(SQLModel):
     pass_rate: float
     preset_count: int
     custom_count: int
+    retrieval_strategy: str
     retrieval_metrics: RetrievalEvaluationMetrics
     category_metrics: list[RAGEvaluationCategoryMetric] = Field(default_factory=list)
     quality_gate: RAGEvaluationQualityGate
@@ -622,6 +628,7 @@ class RAGEvaluationHistoryRead(SQLModel):
     pass_rate: float
     preset_count: int
     custom_count: int
+    retrieval_strategy: str
     knowledge_document_count: int
     knowledge_hash: str | None = None
     created_at: datetime
@@ -737,6 +744,7 @@ class RAGQualityResponse(SQLModel):
     metrics: RAGQualityMetrics
     preset_count: int
     custom_count: int
+    retrieval_strategy: str
     results: list[RAGQualityCaseResult] = Field(default_factory=list)
 
 
@@ -771,6 +779,7 @@ class RAGASAutoEvaluationRunRead(SQLModel):
     id: int
     status: str
     sample_size: int
+    retrieval_strategy: str
     total_count: int
     completed_count: int
     metrics: RAGASMetricScores | None = None

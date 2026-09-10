@@ -121,8 +121,20 @@ class MilvusVectorStore(Milvus):
 
 def get_embeddings() -> OpenAIEmbeddings:
     """Create the OpenAI embedding client shared by retrieval and RAGAS."""
+    # Embedding requests are made before every vector search.  A transient
+    # proxy/API connection failure used to be converted by the ask router into
+    # "please rebuild the knowledge base", even when Milvus and the index were
+    # healthy.  Keep the retry budget configurable, but make the default large
+    # enough for the first request after a container/network wake-up.
+    try:
+        max_retries = max(0, int(os.getenv("OPENAI_MAX_RETRIES", "5")))
+    except ValueError:
+        max_retries = 5
     return OpenAIEmbeddings(
-        model=os.getenv("EMBEDDING_MODEL", "text-embedding-3-small")
+        model=os.getenv("EMBEDDING_MODEL", "text-embedding-3-small"),
+        max_retries=max_retries,
+        retry_min_seconds=1,
+        retry_max_seconds=8,
     )
 
 
