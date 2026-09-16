@@ -1,8 +1,12 @@
 """Layered conversation memory for the medical-health assistant.
 
-Short-term memory is a bounded recent window plus a persisted summary. Long-term
-memory is intentionally conservative: only explicit user preferences or facts
-are stored, never an inferred diagnosis or an ordinary symptom question.
+Three-layer memory architecture:
+  - Working memory: ephemeral task state during a single request (retrieval results,
+    intermediate steps). Cleared after response generation.
+  - Short-term memory: bounded recent window plus a persisted summary for the current
+    conversation. Compressed when exceeding thresholds.
+  - Long-term memory: explicit user preferences and facts (allergies, history, etc.)
+    persisted across sessions. Conservative extraction via regex patterns.
 """
 
 from __future__ import annotations
@@ -11,11 +15,57 @@ import re
 import json
 import math
 import os
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
+from typing import Any
 
 from sqlmodel import Session, select
 
 from app.models import ChatMessage, ConversationMemoryState, User, UserMemory
+
+
+# ── Working Memory ────────────────────────────────────────────────────────────
+
+
+@dataclass
+class WorkingMemory:
+    """Ephemeral state for the current request.
+
+    This is NOT persisted. It lives only for the duration of a single request
+    and is cleared after the response is generated. Used to track:
+      - Retrieved documents and their metadata
+      - Intermediate processing steps (e.g., intent classification result)
+      - Contextual data needed across pipeline stages
+    """
+
+    # Retrieval results
+    retrieved_documents: list[dict[str, Any]] = field(default_factory=list)
+    retrieval_method: str = ""
+    retrieval_count: int = 0
+
+    # Intent routing
+    intent_channel: str = ""  # "chat" | "followup" | "rag"
+    intent_reason: str = ""
+
+    # Processing metadata
+    processing_path: str = ""
+    source_filter: str = "all"
+    knowledge_type: str = "all"
+
+    # User context (injected from short/long-term memory)
+    user_context: str = ""
+
+    def clear(self) -> None:
+        """Reset all working memory fields."""
+        self.retrieved_documents.clear()
+        self.retrieval_method = ""
+        self.retrieval_count = 0
+        self.intent_channel = ""
+        self.intent_reason = ""
+        self.processing_path = ""
+        self.source_filter = "all"
+        self.knowledge_type = "all"
+        self.user_context = ""
 
 
 SHORT_TERM_MESSAGE_LIMIT = 6

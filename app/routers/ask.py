@@ -24,9 +24,16 @@ from app.hybrid_search import (
 )
 from app.monitoring import record_request_metric
 from app.memory import (
+    WorkingMemory,
     build_memory_context,
     finalize_conversation_memory,
     remember_explicit_user_facts,
+)
+from app.intent_router import (
+    IntentChannel,
+    route_intent,
+    build_chat_reply,
+    build_followup_context,
 )
 from app.source_metadata import needs_source_review
 from app.vector_store import (
