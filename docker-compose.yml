@@ -124,3 +124,4 @@ volumes:
   medical_health_etcd:
   medical_health_minio:
   medical_health_milvus:
+
