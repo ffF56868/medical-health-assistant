@@ -78,7 +78,7 @@ CHAT_RULES: list[tuple[tuple, str]] = [
     (FAREWELL_PATTERNS, "再见！如有健康疑问随时回来问我。"),
     (THANKS_PATTERNS, "不客气！还有其他健康问题可以随时问我。"),
     (ACK_PATTERNS, "好的，有需要随时继续问。"),
-    (CHATTER_PATTERNS, "我是医疗健康助手，可以帮你查询病症、药物和健康知识。你可以直接输入健康问题，例如"布洛芬有什么作用？""),
+    (CHATTER_PATTERNS, '我是医疗健康助手，可以帮你查询病症、药物和健康知识。你可以直接输入健康问题，例如"布洛芬有什么作用？"'),
 ]
 
 
