@@ -7,3 +7,4 @@ __pycache__/
 medical_health.db
 chroma_db/
 sample_documents/
+
