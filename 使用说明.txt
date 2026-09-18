@@ -233,3 +233,4 @@ __pycache__/ 和 .pyc
 - vector_store.py 是 RAG 检索引擎。
 - app.js 是网页操作员。
 - docker-compose.yml 是部署运行说明书。
+
