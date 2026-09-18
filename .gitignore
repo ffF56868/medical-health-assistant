@@ -6,3 +6,4 @@ __pycache__/
 database.db
 medical_health.db
 chroma_db/
+
