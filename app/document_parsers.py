@@ -187,7 +187,7 @@ def parse_pdf_file(raw_content: bytes, filename: str) -> list[ParsedDocument]:
             raise ValueError(
                 "PDF 是扫描版，需要安装 OCR 依赖。请运行：pip install pytesseract pdf2image，并安装 Tesseract-OCR"
             )
-        raise ValueError("PDF 中没有可读取的文字内容")
+        raise ValueError("PDF 中没有可读取的文字内容，如果是扫描件请尝试 OCR 识别")
     return parsed_documents
 
 
