@@ -42,6 +42,7 @@ class RouteDecision:
     channel: IntentChannel
     reason: str
     resolved_query: str
+    page_number: int | None = None  # 用户明确指定页码时填充
 
 
 # ── 1. Chat intent ────────────────────────────────────────────────────────────
@@ -132,6 +133,10 @@ def _looks_like_followup(question: str, session: Session, user: User, conversati
     """Heuristic check: is the user continuing the previous conversation turn?"""
     normalized = question.strip()
 
+    # 先排除页码引用（页码引用走 RAG 通道，不算 followup）
+    if _extract_page_number(normalized) is not None:
+        return False
+
     # Explicit pronoun reference
     if any(p.search(normalized) for p in PRONOUN_PATTERNS):
         return True
@@ -180,6 +185,36 @@ def _looks_like_standalone_question(question: str) -> bool:
     return any(marker in question for marker in _STANDALONE_QUESTION_MARKERS)
 
 
+# ── 2.5 Page reference detection ─────────────────────────────────────────────
+
+_PAGE_PATTERNS = (
+    re.compile(r"第\s*(\d+)\s*页"),
+    re.compile(r"(\d+)\s*页"),
+    re.compile(r"page\s*(\d+)", re.IGNORECASE),
+)
+
+
+def _extract_page_number(question: str) -> int | None:
+    """Extract page number from question if user explicitly references a page.
+    
+    Examples:
+        "第50页讲了什么" -> 50
+        "50页的内容" -> 50
+        "page 50" -> 50
+    """
+    normalized = question.strip()
+    for pattern in _PAGE_PATTERNS:
+        match = pattern.search(normalized)
+        if match:
+            try:
+                page_num = int(match.group(1))
+                if 1 <= page_num <= 10000:  # 合理范围
+                    return page_num
+            except (ValueError, IndexError):
+                continue
+    return None
+
+
 # ── 3. Public API ─────────────────────────────────────────────────────────────
 
 
@@ -218,6 +253,16 @@ def route_intent(
             channel=IntentChannel.FOLLOWUP,
             reason="followup-context",
             resolved_query=resolved,
+        )
+
+    # 2.5 Page reference - extract page number and pass to RAG with filter
+    page_number = _extract_page_number(question)
+    if page_number is not None:
+        return RouteDecision(
+            channel=IntentChannel.RAG,
+            reason="rag-page-reference",
+            resolved_query=question,
+            page_number=page_number,
         )
 
     # 3. RAG channel (default)

@@ -197,6 +197,7 @@ def search_knowledge(
     session: Session | None = None,
     keyword_query: str | None = None,
     retrieval_strategy: str = "hybrid-rerank",
+    page_number: int | None = None,
 ):
     if session is not None:
         return hybrid_search(
@@ -209,6 +210,7 @@ def search_knowledge(
             RAG_RETRIEVAL_FETCH_COUNT,
             keyword_query=keyword_query,
             retrieval_strategy=retrieval_strategy,
+            page_number=page_number,
         )
 
     strategy = normalize_retrieval_strategy(retrieval_strategy)
@@ -219,6 +221,7 @@ def search_knowledge(
         knowledge_type,
         source_filter,
         current_user,
+        page_number,
     )
     if vector_filter is not None:
         search_options["filter"] = vector_filter
@@ -853,6 +856,7 @@ def run_rag_answer_pipeline(
             matches = []
         else:
             vector_store = get_vector_store()
+            page_number = get_requested_page_number(question)
             matches = search_knowledge(
                 vector_store,
                 question,
@@ -862,6 +866,7 @@ def run_rag_answer_pipeline(
                 session,
                 question,
                 retrieval_strategy=retrieval_strategy,
+                page_number=page_number,
             )
     except Exception as error:
         logger.exception(
@@ -1068,6 +1073,7 @@ def ask_question(
 
     try:
         vector_store = get_vector_store()
+        page_number = get_requested_page_number(request.question)
         matches = search_knowledge(
             vector_store,
             retrieval_query,
@@ -1076,6 +1082,7 @@ def ask_question(
             current_user,
             session,
             request.question,
+            page_number=page_number,
         )
     except Exception as error:
         record_request_metric(
@@ -1382,6 +1389,7 @@ def stream_answer(
 
     try:
         vector_store = get_vector_store()
+        page_number = get_requested_page_number(request.question)
         matches = search_knowledge(
             vector_store,
             retrieval_query,
@@ -1390,6 +1398,7 @@ def stream_answer(
             current_user,
             session,
             request.question,
+            page_number=page_number,
         )
     except Exception as error:
         record_request_metric(

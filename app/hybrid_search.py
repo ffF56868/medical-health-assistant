@@ -119,6 +119,7 @@ def build_vector_filter(
     knowledge_type: str,
     source_filter: str,
     current_user: User | None = None,
+    page_number: int | None = None,
 ) -> dict | None:
     """Build the vector filter shared by vector and hybrid retrieval."""
     conditions: list[dict] = []
@@ -126,6 +127,8 @@ def build_vector_filter(
         conditions.append({"type": knowledge_type})
     if source_filter == "reviewed":
         conditions.append({"needs_review": False})
+    if page_number is not None:
+        conditions.append({"page_number": page_number})
     if current_user is not None and not current_user.is_admin:
         conditions.append(
             {
@@ -366,6 +369,7 @@ def keyword_search(
     source_filter: str,
     current_user: User | None = None,
     limit: int = KEYWORD_FETCH_COUNT,
+    page_number: int | None = None,
 ) -> list[KeywordMatch]:
     """Search MySQL/SQLModel fields for explicit terms and rank the records."""
     terms = extract_keyword_terms(query)
@@ -419,6 +423,9 @@ def keyword_search(
                 if current_user is not None
                 else select(KnowledgeDocument)
             )
+            # 按页码过滤（仅对 document 类型有效）
+            if page_number is not None:
+                statement = statement.where(KnowledgeDocument.page_number == page_number)
         condition = _contains_any(list(fields.values()), terms)
         if condition is not None:
             statement = statement.where(condition)
@@ -558,6 +565,7 @@ def hybrid_search(
     vector_fetch_count: int = 8,
     keyword_query: str | None = None,
     retrieval_strategy: str = "hybrid-rerank",
+    page_number: int | None = None,
 ) -> list[tuple[Document, float]]:
     """Run the selected retrieval stages and return one ranked list.
 
@@ -574,6 +582,7 @@ def hybrid_search(
         knowledge_type,
         source_filter,
         current_user,
+        page_number,
     )
     if vector_filter is not None:
         vector_options["filter"] = vector_filter
@@ -592,6 +601,7 @@ def hybrid_search(
             knowledge_type,
             source_filter,
             current_user,
+            page_number=page_number,
         )
         if strategy in {"hybrid", "hybrid-rerank"}
         else []

@@ -14,5 +14,8 @@ pypdf
 python-docx
 openpyxl
 beautifulsoup4
+# OCR dependencies for scanned PDFs
+pytesseract>=0.3.10
+pdf2image>=1.16.0
 pytest
 httpx

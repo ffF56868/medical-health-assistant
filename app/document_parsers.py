@@ -18,6 +18,14 @@ from docx import Document as WordDocument
 from openpyxl import load_workbook
 from pypdf import PdfReader
 
+# OCR dependencies - optional, only used for scanned PDFs
+try:
+    import pytesseract
+    from pdf2image import convert_from_bytes
+    OCR_AVAILABLE = True
+except ImportError:
+    OCR_AVAILABLE = False
+
 
 ALLOWED_SUFFIXES = {".md", ".txt", ".pdf", ".docx", ".xlsx", ".xlsm"}
 MAX_DOCUMENT_BYTES = 5_000_000
@@ -76,6 +84,31 @@ def parse_text_file(raw_content: bytes, filename: str) -> list[ParsedDocument]:
     ]
 
 
+def _ocr_page(page_image) -> str:
+    """对单页图片进行 OCR 识别"""
+    if not OCR_AVAILABLE:
+        return ""
+    try:
+        # 使用中文+英文识别
+        text = pytesseract.image_to_string(page_image, lang='chi_sim+eng')
+        return text.strip()
+    except Exception:
+        return ""
+
+
+def _is_scan_page(text: str) -> bool:
+    """判断是否为扫描件页面（文本为空或极少）"""
+    return len(text.strip()) < 50
+
+
+def _ends_with_punctuation(text: str) -> bool:
+    """检查文本是否以结束标点结尾"""
+    if not text.strip():
+        return False
+    last_char = text.strip()[-1]
+    return last_char in '。！？；.!?;'
+
+
 def parse_pdf_file(raw_content: bytes, filename: str) -> list[ParsedDocument]:
     try:
         reader = PdfReader(BytesIO(raw_content))
@@ -84,26 +117,77 @@ def parse_pdf_file(raw_content: bytes, filename: str) -> list[ParsedDocument]:
 
     base_title = get_document_title(filename)
     parsed_documents: list[ParsedDocument] = []
+    
+    # 用于跨页段落拼接
+    carry_over_text = ""
+    carry_over_page = 0
+    
+    # 检查是否有扫描件页面，如果有且 OCR 可用，预先转换所有页面图片
+    needs_ocr = False
+    page_texts = []
     for page_number, page in enumerate(reader.pages, start=1):
         try:
             page_text = page.extract_text() or ""
-        except Exception as error:
-            raise ValueError(f"PDF 第 {page_number} 页文字读取失败") from error
+        except Exception:
+            page_text = ""
+        page_texts.append(page_text)
+        if _is_scan_page(page_text):
+            needs_ocr = True
+    
+    # 如果有扫描件页面且 OCR 可用，转换图片
+    ocr_images = []
+    if needs_ocr and OCR_AVAILABLE:
+        try:
+            ocr_images = convert_from_bytes(raw_content)
+        except Exception:
+            # OCR 转换失败，继续用原文本
+            ocr_images = []
+    
+    for page_number, page_text in enumerate(page_texts, start=1):
+        # 如果是扫描件页面且有 OCR 图片，进行 OCR
+        if _is_scan_page(page_text) and ocr_images and page_number <= len(ocr_images):
+            page_text = _ocr_page(ocr_images[page_number - 1])
+        
         if not page_text.strip():
             continue
+        
+        # 跨页段落拼接逻辑：如果上一页有未结束的段落，拼接到当前页开头
+        if carry_over_text:
+            page_text = carry_over_text + page_text
+            carry_over_text = ""
+        
+        try:
+            normalized_content = normalize_text(page_text, f"PDF 第 {page_number} 页")
+        except ValueError:
+            # 内容过长或为空，跳过
+            continue
+            
         parsed_documents.append(
             ParsedDocument(
                 title=f"{base_title}（第{page_number}页）"[:200],
-                content=normalize_text(page_text, f"PDF 第 {page_number} 页"),
+                content=normalized_content,
                 source=f"上传 PDF：{filename}",
                 page_number=page_number,
             )
         )
+        
+        # 检查当前页末尾是否需要延续到下一页（用于下一页的拼接）
+        # 当前页内容已经保存，不影响当前页的完整性
+        if not _ends_with_punctuation(page_text) and page_number < len(page_texts):
+            # 取最后一行作为可能的跨页段落
+            lines = page_text.rstrip().split('\n')
+            if lines:
+                last_line = lines[-1]
+                # 如果最后一行较短且不以标点结尾，认为是跨页段落
+                if len(last_line) < 100 and not _ends_with_punctuation(last_line):
+                    carry_over_text = last_line + "\n"
 
     if not parsed_documents:
-        raise ValueError(
-            "PDF 中没有可读取文字，扫描版 PDF 需要先进行 OCR 文字识别"
-        )
+        if needs_ocr and not OCR_AVAILABLE:
+            raise ValueError(
+                "PDF 是扫描版，需要安装 OCR 依赖。请运行：pip install pytesseract pdf2image，并安装 Tesseract-OCR"
+            )
+        raise ValueError("PDF 中没有可读取的文字内容")
     return parsed_documents
 
 
